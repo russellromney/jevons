@@ -89,7 +89,8 @@ export function decidePolicy(input: PolicyInput): Desired {
   }
 
   let posture: Posture = answers.posture;
-  if (answers.toxic > config.toxicTau) posture = "pull";
+  // Noul is a calibrated P(true) but does not return a separate confidence field.
+  if (answers.toxic > config.toxicTau && (answers.confidence.toxic ?? 1) >= 0.5) posture = "pull";
   if (answers.stale > config.staleTau && feat.basisBps != null && Math.abs(feat.basisBps) * book.mid / 10_000 > 2 * tickPx) {
     posture = feat.basisBps > 0 ? "bid_only" : "ask_only";
   }
@@ -140,7 +141,7 @@ export function decidePolicy(input: PolicyInput): Desired {
     return { posture: "flatten", bid: null, ask: null, send: had, pull: had };
   }
 
-  if (answers.hold > config.holdTau && touchUnchanged && posture !== "pull" && posture !== "flatten") {
+  if (answers.hold > config.holdTau && touchUnchanged && posture !== "flatten") {
     if (sameLevel(bid, resting.bid) && sameLevel(ask, resting.ask)) {
       return { posture: "sit", bid: resting.bid, ask: resting.ask, send: false, pull: false };
     }

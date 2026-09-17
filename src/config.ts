@@ -43,4 +43,19 @@ export const config = {
   staleTau: 0.65,
   loopBudgetMs: 200,
   dataDir: env("DATA_DIR", "data")!,
+  strategy: (env("STRATEGY", "cex_lag") as "cex_lag" | "liquidation" | "carry" | "event" | "mean_reversion"),
+  referenceUrl: env("REFERENCE_URL", "https://api.gateio.ws/api/v4/futures/usdt/tickers?contract=MON_USDT")!,
+  fundingUrl: env("FUNDING_URL", "https://api.gateio.ws/api/v4/futures/usdt/tickers?contract=MON_USDT")!,
+  referenceWsUrl: env("REFERENCE_WS_URL", "wss://fx-ws.gateio.ws/v4/ws/usdt")!,
+  referencePollMs: Number(env("REFERENCE_POLL_MS", "1000")),
+  referenceStaleMs: Number(env("REFERENCE_STALE_MS", "5000")),
+  referenceReturnWindowMs: Number(env("REFERENCE_RETURN_WINDOW_MS", "1000")),
+  referenceImpulseBps: Number(env("REFERENCE_IMPULSE_BPS", "2")),
+  // MON-USDC currently reports a 0 bps taker fee from getMarketParams.
+  // Keep this an explicit paper assumption so it can be changed when the market does.
+  takerFeeBps: Number(env("PAPER_TAKER_FEE_BPS", "0")),
+  // Extra buffer on top of measured order-book VWAP impact.
+  paperSlippageBps: Number(env("PAPER_SLIPPAGE_BPS", "0")),
+  directionalSizeMon: Number(env("DIRECTIONAL_SIZE_MON", "100")),
+  minExpectedEdgeBps: Number(env("MIN_EXPECTED_EDGE_BPS", "2")),
 };

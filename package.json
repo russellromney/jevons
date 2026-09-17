@@ -10,7 +10,8 @@
     "test": "bun test",
     "sync-types": "cp src/types.ts web/src/lib/types.ts",
     "check-schema": "bun run scripts/check-schema.ts",
-    "bench-read": "bun run scripts/bench-read.ts"
+    "bench-read": "bun run scripts/bench-read.ts",
+    "replay": "bun run scripts/replay.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"

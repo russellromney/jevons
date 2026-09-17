@@ -1,4 +1,4 @@
-app = "sit-maker"
+app = "jevons"
 primary_region = "sjc"
 
 [build]
@@ -7,7 +7,7 @@ primary_region = "sjc"
   PORT = "3000"
   DATA_DIR = "/app/data"
   DRY_RUN = "true"
-  MODEL = "mock"
+  MODEL = "jev"
 
 [http_service]
   internal_port = 3000
@@ -28,10 +28,10 @@ primary_region = "sjc"
   path = "/"
 
 [[vm]]
-  memory = "512mb"
+  memory = "256mb"
   cpu_kind = "shared"
   cpus = 1
 
 [mounts]
-  source = "sit_data"
+  source = "jevons_data"
   destination = "/app/data"

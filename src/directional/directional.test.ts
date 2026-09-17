@@ -1,0 +1,86 @@
+import { describe, expect, test } from "bun:test";
+import type { Book } from "../book";
+import type { Features } from "../features";
+import { evaluateStrategy } from "./engines";
+import { PaperExecutor } from "./paper";
+import type { DirectionalEvent, FeedHealth } from "./types";
+
+const book: Book = {
+  block: 1, bid: 100, ask: 100.1, mid: 100.05, microprice: 100.05, spreadBps: 10,
+  bidSize: 1000, askSize: 1000, imbalance: 0,
+  levels: { bids: [[100, 1000]], asks: [[100.1, 1000]] }, depthBps: { "10": { bid: 1000, ask: 1000 } },
+};
+const features: Features = { mid: 100.05, microprice: 100.05, spreadBps: 10, imbalance: 0, sigma: 0,
+  ret1: 0, ret5: 0, ret20: 0, ret100: 0, cvdMon: 0, lastSide: null, queueBid: 1000, queueAsk: 1000, q: 0, basisBps: 0, medianSpreadBps: 10 };
+const health: FeedHealth = { kuru: "live", reference: "live", liquidation: "missing", funding: "live", events: "missing" };
+
+describe("directional engines", () => {
+  test("does not call ordinary flow a liquidation", () => {
+    const out = evaluateStrategy("liquidation", { block: 1, book, features, reference: null, health });
+    expect(out.candidate).toBeNull();
+    expect(out.holdReason).toContain("liquidation feed unavailable");
+  });
+
+  test("CEX lag requires an unabsorbed reference move that clears costs", () => {
+    const out = evaluateStrategy("cex_lag", { block: 1, book, features, health,
+      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 20, updatedAt: Date.now() } });
+    expect(out.candidate?.action).toBe("buy");
+    expect(out.candidate?.expectedEdgeBps).toBeGreaterThan(0);
+  });
+
+  test("CEX lag does not use a static venue-price level as a directional edge", () => {
+    const out = evaluateStrategy("cex_lag", { block: 1, book, health,
+      features: { ...features, ret5: 7.9 },
+      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 8, updatedAt: Date.now() } });
+    expect(out.candidate).toBeNull();
+    expect(out.holdReason).toContain("unabsorbed move");
+  });
+});
+
+describe("directional paper execution", () => {
+  test("opens at the executable ask and exits at expiry", () => {
+    const paper = new PaperExecutor();
+    const candidate = { action: "buy" as const, reason: "test", expectedEdgeBps: 20, horizonBlocks: 1, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
+    const opened = paper.consider(10, book, candidate, true, "");
+    expect(opened.status).toBe("opened");
+    expect(opened.price).toBe(100.1);
+    expect(paper.portfolio(100.05)).toMatchObject({ mon: 100, cashUsd: -9910, equityUsd: 95 });
+    const closed = paper.update(11, { ...book, mid: 100.3, bid: 100.25, ask: 100.35 });
+    expect(closed?.status).toBe("closed");
+    expect(paper.position(100.3).side).toBe("flat");
+    expect(paper.portfolio(100.3)).toMatchObject({ mon: 0, cashUsd: 90, equityUsd: 90 });
+
+    const restored = new PaperExecutor();
+    restored.restore({
+      position: paper.position(100.3), portfolio: paper.portfolio(100.3), totals: { ...paper.totals },
+    } as DirectionalEvent);
+    expect(restored.portfolio(100.3)).toMatchObject({ mon: 0, cashUsd: 90, equityUsd: 90 });
+    expect(restored.totals.closed).toBe(1);
+  });
+
+  test("rejects a paper entry when displayed L2 cannot fill the configured size", () => {
+    const paper = new PaperExecutor();
+    const candidate = { action: "buy" as const, reason: "test", expectedEdgeBps: 20, horizonBlocks: 1, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
+    const shallow: Book = { ...book, levels: { bids: [[100, 99]], asks: [[100.1, 99]] } };
+    const result = paper.consider(10, shallow, candidate, true, "");
+    expect(result.status).toBe("rejected");
+    expect(result.note).toContain("insufficient displayed depth");
+  });
+});
+
+test("directional wire event round-trips without maker fields", () => {
+  const event: DirectionalEvent = {
+    block: 1, ts: 1, strategy: "cex_lag", mid: 100.05, bestBid: 100, bestAsk: 100.1, spreadBps: 10,
+    reference: null, feedHealth: { kuru: "live", reference: "missing", liquidation: "missing", funding: "missing", events: "missing" },
+    signals: { basisBps: null, referenceReturnBps: null, kuruReturnBps: 0, entryCostBps: 0, roundTripCostBps: 0, residualBps: null },
+    decision: { strategy: "cex_lag", action: "hold", reason: "reference unavailable", candidate: null, jev: null, late: false },
+    execution: { status: "held", action: "hold", price: null, size: 0, feeUsd: 0, slippageBps: 0, notionalUsd: 0, realizedPnlUsd: null, simulated: true, note: "reference unavailable" },
+    position: { side: "flat", size: 0, entryPrice: null, openedBlock: null, expiryBlock: null, stopPrice: null, takeProfitPrice: null, unrealizedUsd: 0 },
+    portfolio: { startingCapitalUsd: 100, cashUsd: 100, mon: 0, markPrice: 100.05, positionValueUsd: 0, equityUsd: 100 },
+    totals: { blocks: 1, decisions: 1, holds: 1, buys: 0, sells: 0, opened: 0, closed: 0, wins: 0, losses: 0, realizedUsd: 0, unrealizedUsd: 0, feesUsd: 0, pnlUsd: 0, pnlPct: 0, maxDrawdownUsd: 0, modelUsd: 0 },
+  };
+  const raw = JSON.parse(JSON.stringify(event));
+  expect(raw.execution.simulated).toBe(true);
+  expect(raw.quote).toBeUndefined();
+  expect(raw.decision.action).toBe("hold");
+});

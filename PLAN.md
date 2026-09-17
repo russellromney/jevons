@@ -1,80 +1,104 @@
-# Build plan
+# Directional trader execution plan
 
-Do these in order. Do not start Vercel before Fly `/` matches `CONTRACT.md`.
+**Goal:** replace the inherited market-maker loop with a dry-run MON directional
+trader. Every active strategy must return `buy`, `sell`, or `hold`; Jev is a
+market-state sensor and deterministic code owns execution and risk.
 
-## P0 — repo skeleton (hour 1)
+**Non-negotiable:** no wallet, no private key, no live orders, and no claim that
+an unavailable input feed is an edge.
 
-- Init git in `~/Documents/Github/sit` (docs already here; do not delete them).
-- Bun project, `src/`, `web/` Next.js (App Router, TS, CSS modules).
-- Shared types: implement `CONTRACT.md` as `src/types.ts` and import in web via copy script `bun run sync-types` **or** a workspace package. Run it in `predev`/`prebuild`.
-- `.env.example` (already in this folder — keep in sync).
-- `.gitignore`: `.env`, `data/`, `web/.next`.
-- Human `README.md` at repo root: keep the handoff README **and** add a `## Run` section (or merge run instructions into the existing README without deleting the handoff table).
+## 1. Directional contract and loop
 
-## P1 — steal execution, no policy (hour 2–4)
+- [x] Replace maker postures and bid/ask quotes with one directional decision.
+- [x] Define one event schema for API, SSE, logs, replay, and UI.
+- [x] Include strategy, action, candidate reason, entry, exits, position, P&L,
+  costs, and data-health in every event.
 
-Port `book.ts`, `chain.ts`, `market.ts`, `trades.ts` from jev-trader. Change `quotePrice` to return **both** sides from reservation, not one side inside the touch.
+**Acceptance:** an event says exactly why it bought, sold, or held. It has no
+resting-order fields and no simulated maker fill.
 
-Scripts: `scripts/bench-read.ts`, `scripts/dry-encode.ts` (assert calldata vs SDK).
+## 2. Normalized data feeds
 
-`Market.sendBoth(block, bid, ask, cancel)` → one `batchUpdate` with both arrays, `postOnly=true`.
+- [x] Normalize Kuru book and trade data.
+- [x] Add an off-hot-path MON reference-price and funding feed.
+- [x] Surface freshness and missing feeds instead of inventing values.
 
-## P2 — features + mock sensors + policy + loop (hour 4–8)
+**Acceptance:** a stale or absent reference, funding, liquidation, or event feed
+blocks the strategy that requires it.
 
-`features.ts`, `model.ts` (mock), `policy.ts`, `trader.ts`, `log.ts` (async append), `server.ts`, `index.ts`.
+## 3. Five strategy engines
 
-Unit tests: policy, fills, schema round-trip.
+- [x] CEX-led Kuru lag reaction.
+- [x] Liquidation / flow continuation.
+- [x] Basis / funding carry.
+- [x] Event reaction.
+- [x] Regime-switching mean reversion.
 
-Local: `cp .env.example .env && bun install && bun run start`  
-Watch logs: sits >> quotes, occasional FILL (sim), no BSBSBS posture tape.
+**Acceptance:** each engine has an explicit trigger, required feed set, trade
+horizon, invalidation, and hold path.
 
-**Gate:** 500 blocks local, mean posture run ≥ 8, fill/quote < 0.25, `/` JSON has `quote.status` resting most blocks.
+## 4. Jev gate
 
-## P3 — dashboard (hour 8–12)
+- [x] Ask small, candidate-specific state questions in parallel.
+- [x] Use deterministic fallback when Jev is unavailable or times out.
+- [x] Reject conflicting classifications.
 
-Rebuild web against `CONTRACT.md`. Do not paste jev-trader copy (“STANDING ORDER / no abstaining / WHICH SIDE THIS BLOCK”).
+**Acceptance:** Jev never chooses the side by itself; code combines its gate
+with measurable edge, costs, freshness, and limits.
 
-Must show: dry run, posture, toxic/stale/hold, resting bid+ask, sat vs requote, markout, P&L USD, fill rate.
+## 5. Paper execution and risk
 
-Connecting ≠ LATE.
+- [x] Fill a directional paper order at the executable Kuru touch plus a
+  conservative slippage assumption.
+- [x] Track open position, realized/unrealized P&L, fees, stops, take-profit,
+  expiry, and max loss.
+- [x] Prohibit a new trade while a position is open unless it is an exit.
 
-`NEXT_PUBLIC_API_URL` default empty → same-origin in prod we will set to Fly.
+**Acceptance:** P&L is based on paper entry and exit prices, not a maker-fill
+model or a decision counter.
 
-## P4 — luna adapter (hour 12–14)
+## 6. Capture and replay
 
-If keys exist in soup/env, `MODEL=luna`. Same questions. Timeout. Fallback mock.
+- [x] Append normalized state and decisions to JSONL asynchronously.
+- [x] Add deterministic replay and summary metrics by strategy.
+- [x] Compare Jev-gated results with a deterministic baseline.
 
-If no keys: skip, mock is enough to deploy.
+**Acceptance:** replay reports trades, win rate, P&L, maximum drawdown, and
+hold reasons from captured data without calling a model or venue.
 
-## P5 — Fly.io bot (hour 14–16)
+## 7. Strategy-controlled dashboard
 
-See `DEPLOY.md`. Region close to Monad RPC if possible (`sjc` or `iad`). Volume for `data/events.jsonl`. Secrets: none required for dry-run besides optional model keys.
+- [x] Add a dry-run endpoint for changing the active strategy.
+- [x] Make the footer selector change the server-side paper engine.
+- [x] Show only the selected engine's real position, P&L, block decisions,
+  feed health, and trade history.
 
-Curl `https://<app>.fly.dev/` — schema check script `scripts/check-schema.ts` that fetches `/` and asserts keys.
+**Acceptance:** changing the footer updates the active strategy in the next SSE
+event and the dashboard never labels maker telemetry as a directional result.
 
-SSE from a browser or `curl -N /events` — snapshot then blocks.
+## Execution order
 
-## P6 — Vercel web (hour 16–18)
+1. Contract, deterministic engine interface, and paper executor.
+2. CEX reference feed and CEX lead-lag engine.
+3. The remaining engines with explicit unavailable-feed holds.
+4. Jev candidate gate.
+5. Capture/replay.
+6. Server endpoint, dashboard wiring, tests, Fly dry-run deployment.
+7. Review every acceptance condition against the implementation.
 
-`web/` as the Vercel root. Env `NEXT_PUBLIC_API_URL=https://<app>.fly.dev`.
+## Execution record
 
-Browser: desktop + mobile. Watch 30s. Confirm sits. Confirm 0 fills in the header is **true** (quotes may be >0, fills rare) not `undefined`.
+Updated while work is performed. A checked item means code and a targeted test
+exist, not merely a design discussion.
 
-## P7 — jev adapter (if key)
+## Review against the plan — 2026-09-17
 
-`MODEL=jev`. Do not enable on Fly until mock/luna dry-run looks like a maker. Optional: Fly `MODEL=mock` first launch, swap luna/jev via `fly secrets` without a frontend change.
-
-## P8 — launch
-
-`LAUNCH.md`. Russell posts. Do not auto-tweet.
-
-## Out of scope for this session
-
-- Real `PRIVATE_KEY` / margin deposits
-- CEX websocket (optional if easy: Binance `monusdt` or a proxy; if not, `refFeed: false`)
-- Multi-market scanner
-- Distilling a local model
-
-## Definition of done (session)
-
-Fly + Vercel live, dry-run, schema-honest, tape that sits, launch checklist filled through “deployed”, tweet drafted.
+| Step | Result | Evidence |
+|---|---|---|
+| 1 | Complete | `DirectionalEvent` is served over snapshot/SSE; maker `quote` and `resting` are absent from the active process. |
+| 2 | Complete with explicit limits | Kuru is live; Gate MON futures supplies reference and funding. Liquidation and event feeds are intentionally reported `missing`, never synthesized. |
+| 3 | Complete | All five engine modules have trigger and hold paths. Only engines whose required feeds are live can form candidates. |
+| 4 | Complete | Candidate-only Jev questions run in parallel, with deterministic fallback and strategy-specific rejection logic. |
+| 5 | Complete | Paper entries use bid/ask plus slippage and fees; exits use stop, target, expiry, and max loss. No wallet path exists. |
+| 6 | Complete | JSONL capture and `bun run replay` report actual versus deterministic-baseline P&L, drawdown, wins, losses, and Jev gate counts. Current sample has no qualifying trades, so both P&L values are honestly zero. |
+| 7 | Complete | `POST /strategy` controls the active paper engine. Browser verification confirmed the footer selection updates the server loop and matching popup. |

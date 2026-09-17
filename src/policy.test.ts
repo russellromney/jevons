@@ -19,7 +19,7 @@ const feat = (q = 0): Features => ({
 
 const answers = (over: Partial<Answers> = {}): Answers => ({
   toxic: 0.1, stale: 0.05, hold: 0.2, posture: "both", widthTicks: 0, sizeMult: 1,
-  regime: "quiet", probabilities: { both: 1 }, latencyMs: 0, inputTokens: 0, skipped: false,
+  regime: "quiet", probabilities: { both: 1 }, confidence: { toxic: 1 }, latencyMs: 0, inputTokens: 0, skipped: false,
   ...over,
 });
 

@@ -1,6 +1,6 @@
 import { config } from "./config";
 import { join } from "node:path";
-import type { BlockEvent, Fill, Meta, Quote } from "./types";
+import type { DirectionalEvent, DirectionalMeta, StrategyId } from "./directional/types";
 
 const CORS = {
   "access-control-allow-origin": "*",
@@ -10,12 +10,17 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "content-type": "application/json" } });
 
-export function startServer(meta: Meta, history: () => BlockEvent[]) {
+export function startServer(
+  meta: DirectionalMeta,
+  history: () => DirectionalEvent[],
+  controls: { setStrategy: (value: string) => StrategyId | null; activeStrategy: () => StrategyId } | null = null,
+) {
   const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const enc = new TextEncoder();
   const send = (c: ReadableStreamDefaultController<Uint8Array>, type: string, data: unknown) => {
     try { c.enqueue(enc.encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)); } catch { clients.delete(c); }
   };
+  const liveMeta = () => ({ ...meta, activeStrategy: controls?.activeStrategy() ?? meta.activeStrategy });
   setInterval(() => clients.forEach((c) => send(c, "ping", Date.now())), 10_000);
 
   Bun.serve({
@@ -23,19 +28,27 @@ export function startServer(meta: Meta, history: () => BlockEvent[]) {
     fetch(req) {
       const { pathname } = new URL(req.url);
       if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
-      if (pathname === "/snapshot") return json({ ...meta, latest: history().at(-1) ?? null });
+      if (pathname === "/snapshot") return json({ ...liveMeta(), latest: history().at(-1) ?? null });
+      if (pathname === "/strategy") {
+        if (req.method !== "POST" || !controls) return json({ error: "not available" }, 405);
+        return req.json().then((raw: unknown) => {
+          const body = raw as { strategy?: string };
+          const activeStrategy = controls.setStrategy(body.strategy ?? "");
+          return activeStrategy ? json({ activeStrategy }) : json({ error: "unknown strategy" }, 400);
+        }).catch(() => json({ error: "invalid JSON" }, 400));
+      }
       if (pathname === "/" || pathname === "/app" || pathname === "/ui") {
         const accept = req.headers.get("accept") ?? "";
         if (pathname !== "/" || accept.includes("text/html")) {
           const file = Bun.file(join(import.meta.dir, "ui.html"));
           return new Response(file, { headers: { ...CORS, "content-type": "text/html; charset=utf-8" } });
         }
-        return json({ ...meta, latest: history().at(-1) ?? null });
+        return json({ ...liveMeta(), latest: history().at(-1) ?? null });
       }
       if (pathname === "/history") return json(history());
       if (pathname === "/events") {
         const stream = new ReadableStream<Uint8Array>({
-          start(c) { clients.add(c); send(c, "snapshot", { ...meta, history: history() }); },
+          start(c) { clients.add(c); send(c, "snapshot", { ...liveMeta(), history: history() }); },
           cancel(c) { clients.delete(c); },
         });
         return new Response(stream, {
@@ -53,9 +66,5 @@ export function startServer(meta: Meta, history: () => BlockEvent[]) {
   });
 
   const broadcast = (type: string, data: unknown) => clients.forEach((c) => send(c, type, data));
-  return {
-    broadcast: (e: BlockEvent) => broadcast("block", e),
-    broadcastQuote: (block: number, quote: Quote) => broadcast("quote", { block, quote }),
-    broadcastFill: (block: number, fill: Fill) => broadcast("fill", { block, fill }),
-  };
+  return { broadcast: (e: DirectionalEvent) => broadcast("block", e) };
 }

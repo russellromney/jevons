@@ -2,7 +2,7 @@
 
 ## Fly.io — bot + SSE
 
-App name suggestion: `sit-maker` (change if taken).
+App name: `jevons`.
 
 ```
 cd ~/Documents/Github/sit
@@ -45,10 +45,10 @@ CMD ["bun", "run", "src/index.ts"]
 ### Schema probe (run after deploy)
 
 ```
-bun run scripts/check-schema.ts https://sit-maker.fly.dev
+bun run scripts/check-schema.ts https://jevons.fly.dev
 ```
 
-Assert latest has `quote`, `resting`, `decision.posture`, `totals.fills`, `totals.sits`, `totals.fillRate`. Fail CI/deploy if missing.
+Assert latest has `strategy`, `feedHealth`, `decision.action`, `execution`, `position`, and directional P&L totals. Fail CI/deploy if missing.
 
 ## Vercel — website
 
@@ -56,7 +56,7 @@ Assert latest has `quote`, `resting`, `decision.posture`, `totals.fills`, `total
 cd web
 # vercel project, root directory web/
 # env:
-# NEXT_PUBLIC_API_URL=https://sit-maker.fly.dev
+# NEXT_PUBLIC_API_URL=https://jevons.fly.dev
 ```
 
 CORS is `*` on the bot so Vercel origin is fine.

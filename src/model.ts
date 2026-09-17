@@ -1,4 +1,6 @@
 import { config } from "./config";
+import { experimental_evaluate } from "ai";
+import { createTypeSafeAi } from "@ai-sdk/typesafe-ai";
 import type { Features } from "./features";
 import type { Book } from "./book";
 import type { TradeSummary } from "./trades";
@@ -16,6 +18,8 @@ export interface Answers {
   sizeMult: number;
   regime: Regime;
   probabilities: Record<string, number>;
+  /** Per-question calibration confidence from Jev. Mock uses 1. */
+  confidence: Record<string, number>;
   latencyMs: number;
   inputTokens: number;
   skipped: boolean;
@@ -136,6 +140,7 @@ export function mockAnswers(state: ModelState): Answers {
   return {
     toxic, stale, hold, posture, widthTicks, sizeMult, regime, probabilities,
     latencyMs: 0, inputTokens: 0, skipped: false,
+    confidence: { toxic: 1, stale: 1, hold: 1, posture: 1, width: 1, size: 1, regime: 1 },
   };
 }
 
@@ -168,7 +173,7 @@ const LUNA_SCHEMA = {
   },
 } as const;
 
-function parseLuna(raw: unknown): Omit<Answers, "latencyMs" | "inputTokens" | "skipped" | "probabilities"> {
+function parseLuna(raw: unknown): Omit<Answers, "latencyMs" | "inputTokens" | "skipped" | "probabilities" | "confidence"> {
   const o = raw as Record<string, unknown>;
   const posture = (["both", "bid_only", "ask_only", "pull", "flatten"] as const).includes(o.posture as ModelPosture)
     ? (o.posture as ModelPosture) : "both";
@@ -221,7 +226,7 @@ export class LunaModel implements Model {
       const parsed = parseLuna(JSON.parse(content));
       const probabilities: Record<string, number> = { both: 0.1, bid_only: 0.1, ask_only: 0.1, pull: 0.1, flatten: 0.1 };
       probabilities[parsed.posture] = 0.6;
-      return { ...parsed, probabilities, latencyMs: Date.now() - t0, inputTokens: json.usage?.prompt_tokens ?? 0, skipped: false };
+      return { ...parsed, probabilities, confidence: {}, latencyMs: Date.now() - t0, inputTokens: json.usage?.prompt_tokens ?? 0, skipped: false };
     } finally {
       clearTimeout(timer);
     }
@@ -230,30 +235,20 @@ export class LunaModel implements Model {
 
 const JEV_QUESTIONS = {
   toxic: {
-    type: "noul" as const,
-    instructions: {
-      question: "Will the next maker fill on our resting bid or ask be informed: mid moves against our fill over the next ~10 seconds (~33 blocks) by more than half the spread?",
-      goal: "We post two-sided post-only limit quotes on Kuru MON-USDC. Quotes rest until the touch moves or we pull. We earn the spread when a taker hits us. High means pull or widen.",
-    },
+    type: "boolean" as const,
+    instructions: "Is adverse-selection risk high for a two-sided resting maker quote during the next ~10 seconds? True means a fill is likely to be followed by a mid-price move against us greater than half the spread.",
   },
   stale: {
-    type: "noul" as const,
-    instructions: {
-      question: "Is Kuru's mid stale versus the reference mid (basisBps), such that a taker will pick off our quote on the stale side this block?",
-    },
+    type: "boolean" as const,
+    instructions: "Is Kuru's mid stale versus the reference mid in basisBps, creating a pickoff risk on the stale side this block?",
   },
   hold: {
-    type: "noul" as const,
-    instructions: {
-      question: "Is last.posture still the right maker posture given that quotes rest and we only pay gas to change them? High means sit; do not churn.",
-    },
+    type: "boolean" as const,
+    instructions: "Does the prior maker posture remain appropriate at this unchanged touch? True means leave resting quotes unchanged and do not spend gas to requote.",
   },
   posture: {
     type: "choice" as const,
-    instructions: {
-      question: "What should the maker do now?",
-      options: "both = two-sided around reservation; bid_only = buy/reduce short; ask_only = sell/reduce long; pull = cancel everything; flatten = reducing side only. Not buy/sell as a 30s forecast.",
-    },
+    instructions: "Choose the safe quote posture for a two-sided post-only market maker. This is not a directional trade forecast.",
     criteria: {
       both: "Two-sided around reservation",
       bid_only: "Want to buy / reduce a short; no ask",
@@ -264,7 +259,7 @@ const JEV_QUESTIONS = {
   },
   width: {
     type: "score" as const,
-    instructions: { question: "How many extra ticks of half-spread?" },
+    instructions: "How many extra ticks should widen the half-spread for current conditions?",
     criteria: [
       "0 join the touch (quiet, two-way noise)",
       "1 +1 tick",
@@ -274,12 +269,12 @@ const JEV_QUESTIONS = {
   },
   size: {
     type: "score" as const,
-    instructions: { question: "Size multiplier for TRADE_SIZE." },
+    instructions: "What quote-size level is appropriate for the current maker risk?",
     criteria: ["0 none", "1 half", "2 full", "3 double — only if inventory is small and toxic is low"],
   },
   regime: {
     type: "choice" as const,
-    instructions: { question: "Market regime." },
+    instructions: "Classify the current market regime for the maker dashboard.",
     criteria: {
       quiet: "Two-way noise, sit tight",
       trend: "Directional tape",
@@ -294,17 +289,15 @@ export class JevModel implements Model {
   readonly name = config.jevModelId;
   async decide(state: ModelState): Promise<Answers> {
     const t0 = Date.now();
-    const { experimental_evaluate } = await import("ai");
-    const { typeSafeAi } = await import("@ai-sdk/typesafe-ai");
-    const model = typeSafeAi.evaluationModel(config.jevModelId);
-    const { answers, usage } = await experimental_evaluate({
+    const model = createTypeSafeAi({ apiKey: config.typesafeKey }).evaluationModel(config.jevModelId);
+    const result = await experimental_evaluate({
       model,
-      state,
+      state: JSON.parse(JSON.stringify(state)),
       questions: JEV_QUESTIONS,
-    }) as {
-      answers: Record<string, any>;
-      usage?: { inputTokens?: number };
-    };
+    });
+    const answers = result.answers as Record<string, any>;
+    const usage = result.usage;
+    const confidence = (result.providerMetadata?.typesafe?.confidence ?? {}) as Record<string, number>;
     const postureRaw = String(answers.posture?.choice ?? "both");
     const posture: ModelPosture = (["both", "bid_only", "ask_only", "pull", "flatten"] as const).includes(postureRaw as ModelPosture)
       ? postureRaw as ModelPosture : "both";
@@ -315,14 +308,15 @@ export class JevModel implements Model {
     const sizeScore = Number(answers.size?.score ?? 2);
     const probabilities = (answers.posture?.probabilities ?? {}) as Record<string, number>;
     return {
-      toxic: clip01(Number(answers.toxic?.noul ?? answers.toxic ?? 0)),
-      stale: clip01(Number(answers.stale?.noul ?? answers.stale ?? 0)),
-      hold: clip01(Number(answers.hold?.noul ?? answers.hold ?? 0)),
+      toxic: clip01(Number(answers.toxic?.probability ?? 0)),
+      stale: clip01(Number(answers.stale?.probability ?? 0)),
+      hold: clip01(Number(answers.hold?.probability ?? 0)),
       posture,
       widthTicks: Math.max(0, Math.min(3, Math.round(widthScore))),
       sizeMult: sizeScore <= 0 ? 0 : sizeScore <= 1 ? 0.5 : sizeScore >= 3 ? 2 : 1,
       regime,
       probabilities: Object.keys(probabilities).length ? probabilities : { [posture]: 1 },
+      confidence,
       latencyMs: Date.now() - t0,
       inputTokens: usage?.inputTokens ?? 0,
       skipped: false,
