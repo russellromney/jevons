@@ -1,0 +1,73 @@
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px 8px;
+  flex-wrap: wrap;
+}
+.title { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; margin: 0; }
+.dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #ccc;
+}
+.dotLive { background: #4ade80; }
+.dotWait { background: #f2c063; }
+.badge {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
+}
+.dry { background: var(--badge-dry); color: var(--badge-dry-ink); }
+.model { background: var(--badge-live); color: var(--badge-live-ink); }
+.stats {
+  display: flex; flex-wrap: wrap; gap: 14px 20px;
+  padding: 4px 20px 12px; color: var(--muted); font-size: 13px;
+}
+.main {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 16px;
+  padding: 0 20px;
+}
+.panel {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.label {
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 8px;
+}
+.posture {
+  font-size: 42px; font-weight: 650; letter-spacing: -0.04em; margin: 0 0 8px;
+  text-transform: uppercase;
+}
+.bars { display: grid; gap: 6px; margin: 12px 0; }
+.barRow { display: grid; grid-template-columns: 64px 1fr 40px; gap: 8px; align-items: center; font-size: 12px; }
+.track { height: 8px; background: #e8e6df; border-radius: 99px; overflow: hidden; }
+.fill { height: 100%; background: var(--sit); border-radius: 99px; }
+.quotes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.q {
+  background: #fff; border-radius: 8px; padding: 10px 12px;
+}
+.qName { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.qPx { font-size: 16px; font-weight: 600; margin-top: 2px; }
+.chart {
+  height: 160px; display: flex; align-items: flex-end; gap: 1px;
+  margin-top: 8px;
+}
+.cell { flex: 1; min-width: 2px; border-radius: 1px 1px 0 0; }
+.tape { max-height: 280px; overflow: auto; font-size: 12px; }
+.row {
+  display: grid;
+  grid-template-columns: 88px 72px 1fr 72px 56px;
+  gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border);
+}
+.footer {
+  padding: 16px 20px 0; font-size: 12px; color: var(--muted);
+}
+.footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; }
+  .posture { font-size: 32px; }
+  .row { grid-template-columns: 72px 56px 1fr 48px; }
+}

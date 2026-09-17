@@ -1,0 +1,356 @@
+import { config } from "./config";
+import type { Features } from "./features";
+import type { Book } from "./book";
+import type { TradeSummary } from "./trades";
+import type { Posture, Sensors } from "./types";
+
+export type Regime = Sensors["regime"];
+export type ModelPosture = "both" | "bid_only" | "ask_only" | "pull" | "flatten";
+
+export interface Answers {
+  toxic: number;
+  stale: number;
+  hold: number;
+  posture: ModelPosture;
+  widthTicks: number;
+  sizeMult: number;
+  regime: Regime;
+  probabilities: Record<string, number>;
+  latencyMs: number;
+  inputTokens: number;
+  skipped: boolean;
+}
+
+export interface ModelState {
+  market: "MON-USDC";
+  block: number;
+  blockMs: 300;
+  mid: number;
+  microprice: number;
+  spreadBps: number;
+  sigmaBlock: number;
+  imbalance: number;
+  depth: { "10bps": { bid: number; ask: number }; "25bps": { bid: number; ask: number } };
+  book: { bids: string[]; asks: string[] };
+  returnsBps: { last1: number; last5: number; last20: number; last100: number };
+  recentMids: string;
+  trades: { count: number; buyMon: number; sellMon: number; cvdMon: number; lastSide: "buy" | "sell" | null };
+  recentTrades: string[];
+  inventoryMon: number;
+  inventoryTarget: 0;
+  resting: { bidMon: number; askMon: number; bidPx: number | null; askPx: number | null; ageBlocks: number };
+  last: { posture: string; toxic: number; stale: number; hold: number; blocksSinceQuoteChange: number };
+  basisBps: number | null;
+  execution: {
+    style: "two-sided post-only limit quotes on Kuru";
+    life: "quotes rest until touch moves or a gate pulls; they are not IOC and do not cross";
+    weEarn: "spread if a taker hits us; we pay gas only when we send";
+  };
+}
+
+export interface Model {
+  readonly name: string;
+  decide(state: ModelState): Promise<Answers>;
+}
+
+const EXEC = {
+  style: "two-sided post-only limit quotes on Kuru" as const,
+  life: "quotes rest until touch moves or a gate pulls; they are not IOC and do not cross" as const,
+  weEarn: "spread if a taker hits us; we pay gas only when we send" as const,
+};
+
+export function buildState(opts: {
+  block: number;
+  book: Book;
+  feat: Features;
+  trades: TradeSummary;
+  recentTrades: string[];
+  recentMids: number[];
+  q: number;
+  resting: ModelState["resting"];
+  last: ModelState["last"];
+}): ModelState {
+  const { book, feat } = opts;
+  const d10 = book.depthBps["10"] ?? { bid: 0, ask: 0 };
+  const d25 = book.depthBps["25"] ?? { bid: 0, ask: 0 };
+  return {
+    market: "MON-USDC",
+    block: opts.block,
+    blockMs: 300,
+    mid: feat.mid,
+    microprice: feat.microprice,
+    spreadBps: feat.spreadBps,
+    sigmaBlock: feat.sigma,
+    imbalance: feat.imbalance,
+    depth: { "10bps": d10, "25bps": d25 },
+    book: {
+      bids: book.levels.bids.map(([p, s]) => `${p.toFixed(6)} x ${s.toFixed(1)}`),
+      asks: book.levels.asks.map(([p, s]) => `${p.toFixed(6)} x ${s.toFixed(1)}`),
+    },
+    returnsBps: { last1: feat.ret1, last5: feat.ret5, last20: feat.ret20, last100: feat.ret100 },
+    recentMids: opts.recentMids.map((m) => m.toFixed(6)).join(" "),
+    trades: {
+      count: opts.trades.count,
+      buyMon: opts.trades.buyMon,
+      sellMon: opts.trades.sellMon,
+      cvdMon: opts.trades.cvdMon,
+      lastSide: opts.trades.lastSide,
+    },
+    recentTrades: opts.recentTrades,
+    inventoryMon: opts.q,
+    inventoryTarget: 0,
+    resting: opts.resting,
+    last: opts.last,
+    basisBps: feat.basisBps,
+    execution: EXEC,
+  };
+}
+
+const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
+const clip01 = (x: number) => Math.min(1, Math.max(0, x));
+
+export function mockAnswers(state: ModelState): Answers {
+  const vol = state.trades.buyMon + state.trades.sellMon;
+  const cvd = vol > 0 ? Math.abs(state.trades.cvdMon) / vol : 0;
+  const spreadHot = state.spreadBps > 2 * Math.max(state.spreadBps * 0 + 4, 4) ? 1 : state.spreadBps > 8 ? 1 : 0;
+  // median isn't in state; use 4 bps as quiet typical for this pair, extra if spread is wide
+  const toxic = clip01(sigmoid(cvd * 3 + (state.spreadBps > 8 ? 2 : 0) - 1.2));
+  const stale = state.basisBps == null ? 0 : clip01(sigmoid(Math.abs(state.basisBps) / 2 - 1));
+  const hold = state.last.blocksSinceQuoteChange > 0 && Math.abs(state.returnsBps.last1) < 1 && toxic < 0.4 ? 0.85 : 0.2;
+  const max = config.maxPositionMon;
+  const q = state.inventoryMon;
+  let posture: ModelPosture = "both";
+  if (toxic > 0.65) posture = "pull";
+  else if (Math.abs(q) > 0.8 * max) posture = "flatten";
+  else if (q < -0.4 * max) posture = "bid_only";
+  else if (q > 0.4 * max) posture = "ask_only";
+  const widthTicks = state.sigmaBlock > 0.0003 || toxic > 0.45 ? 2 : 0;
+  const sizeMult = toxic > 0.65 ? 0 : 1;
+  let regime: Regime = "quiet";
+  if (posture === "pull" || toxic > 0.65) regime = "toxic";
+  else if (stale > 0.65) regime = "stale_vs_cex";
+  else if (Math.abs(state.returnsBps.last20) > 8) regime = "trend";
+  else if (state.spreadBps > 12) regime = "event";
+  const probabilities: Record<string, number> = { both: 0.2, bid_only: 0.1, ask_only: 0.1, pull: 0.1, flatten: 0.1 };
+  probabilities[posture] = 0.7;
+  const sum = Object.values(probabilities).reduce((a, b) => a + b, 0);
+  for (const k of Object.keys(probabilities)) probabilities[k] = (probabilities[k] ?? 0) / sum;
+  return {
+    toxic, stale, hold, posture, widthTicks, sizeMult, regime, probabilities,
+    latencyMs: 0, inputTokens: 0, skipped: false,
+  };
+}
+
+export class MockModel implements Model {
+  readonly name = "mock";
+  async decide(state: ModelState): Promise<Answers> {
+    return mockAnswers(state);
+  }
+}
+
+const LUNA_SCHEMA = {
+  type: "json_schema",
+  json_schema: {
+    name: "sit_sensors",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        toxic: { type: "number" },
+        stale: { type: "number" },
+        hold: { type: "number" },
+        posture: { type: "string", enum: ["both", "bid_only", "ask_only", "pull", "flatten"] },
+        width: { type: "number" },
+        size: { type: "number" },
+        regime: { type: "string", enum: ["quiet", "trend", "toxic", "event", "stale_vs_cex"] },
+      },
+      required: ["toxic", "stale", "hold", "posture", "width", "size", "regime"],
+    },
+  },
+} as const;
+
+function parseLuna(raw: unknown): Omit<Answers, "latencyMs" | "inputTokens" | "skipped" | "probabilities"> {
+  const o = raw as Record<string, unknown>;
+  const posture = (["both", "bid_only", "ask_only", "pull", "flatten"] as const).includes(o.posture as ModelPosture)
+    ? (o.posture as ModelPosture) : "both";
+  const regime = (["quiet", "trend", "toxic", "event", "stale_vs_cex"] as const).includes(o.regime as Regime)
+    ? (o.regime as Regime) : "quiet";
+  const width = Number(o.width) || 0;
+  const size = Number(o.size) || 2;
+  const sizeMult = size <= 0 ? 0 : size <= 1 ? 0.5 : size >= 3 ? 2 : 1;
+  return {
+    toxic: clip01(Number(o.toxic) || 0),
+    stale: clip01(Number(o.stale) || 0),
+    hold: clip01(Number(o.hold) || 0),
+    posture,
+    widthTicks: Math.max(0, Math.min(3, Math.round(width))),
+    sizeMult,
+    regime,
+  };
+}
+
+export class LunaModel implements Model {
+  readonly name = config.lunaModel ? `luna:${config.lunaModel}` : "luna";
+  async decide(state: ModelState): Promise<Answers> {
+    const t0 = Date.now();
+    const url = (config.lunaBaseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "") + "/chat/completions";
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 180);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${config.lunaApiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.lunaModel ?? "gpt-4.1-mini",
+          temperature: 0,
+          response_format: LUNA_SCHEMA,
+          messages: [
+            {
+              role: "system",
+              content: "You are a market-making sensor. Quotes are two-sided post-only limits that rest until the touch or a gate changes. They are not IOC and do not cross the spread. Return calibrated probabilities.",
+            },
+            { role: "user", content: JSON.stringify(state) },
+          ],
+        }),
+        signal: controller.signal,
+      });
+      const json = await res.json() as { choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number } };
+      const content = json.choices?.[0]?.message?.content ?? "{}";
+      const parsed = parseLuna(JSON.parse(content));
+      const probabilities: Record<string, number> = { both: 0.1, bid_only: 0.1, ask_only: 0.1, pull: 0.1, flatten: 0.1 };
+      probabilities[parsed.posture] = 0.6;
+      return { ...parsed, probabilities, latencyMs: Date.now() - t0, inputTokens: json.usage?.prompt_tokens ?? 0, skipped: false };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+const JEV_QUESTIONS = {
+  toxic: {
+    type: "noul" as const,
+    instructions: {
+      question: "Will the next maker fill on our resting bid or ask be informed: mid moves against our fill over the next ~10 seconds (~33 blocks) by more than half the spread?",
+      goal: "We post two-sided post-only limit quotes on Kuru MON-USDC. Quotes rest until the touch moves or we pull. We earn the spread when a taker hits us. High means pull or widen.",
+    },
+  },
+  stale: {
+    type: "noul" as const,
+    instructions: {
+      question: "Is Kuru's mid stale versus the reference mid (basisBps), such that a taker will pick off our quote on the stale side this block?",
+    },
+  },
+  hold: {
+    type: "noul" as const,
+    instructions: {
+      question: "Is last.posture still the right maker posture given that quotes rest and we only pay gas to change them? High means sit; do not churn.",
+    },
+  },
+  posture: {
+    type: "choice" as const,
+    instructions: {
+      question: "What should the maker do now?",
+      options: "both = two-sided around reservation; bid_only = buy/reduce short; ask_only = sell/reduce long; pull = cancel everything; flatten = reducing side only. Not buy/sell as a 30s forecast.",
+    },
+    criteria: {
+      both: "Two-sided around reservation",
+      bid_only: "Want to buy / reduce a short; no ask",
+      ask_only: "Want to sell / reduce a long; no bid",
+      pull: "Cancel everything; flow looks toxic or book broken",
+      flatten: "Inventory too large; reducing side only",
+    },
+  },
+  width: {
+    type: "score" as const,
+    instructions: { question: "How many extra ticks of half-spread?" },
+    criteria: [
+      "0 join the touch (quiet, two-way noise)",
+      "1 +1 tick",
+      "2 +2 ticks (elevated vol or mild toxic)",
+      "3 +3 ticks or more (event / thin)",
+    ],
+  },
+  size: {
+    type: "score" as const,
+    instructions: { question: "Size multiplier for TRADE_SIZE." },
+    criteria: ["0 none", "1 half", "2 full", "3 double — only if inventory is small and toxic is low"],
+  },
+  regime: {
+    type: "choice" as const,
+    instructions: { question: "Market regime." },
+    criteria: {
+      quiet: "Two-way noise, sit tight",
+      trend: "Directional tape",
+      toxic: "Informed flow",
+      event: "Wide spread / jumpy",
+      stale_vs_cex: "On-chain lagging a reference",
+    },
+  },
+};
+
+export class JevModel implements Model {
+  readonly name = config.jevModelId;
+  async decide(state: ModelState): Promise<Answers> {
+    const t0 = Date.now();
+    const { experimental_evaluate } = await import("ai");
+    const { typeSafeAi } = await import("@ai-sdk/typesafe-ai");
+    const model = typeSafeAi.evaluationModel(config.jevModelId);
+    const { answers, usage } = await experimental_evaluate({
+      model,
+      state,
+      questions: JEV_QUESTIONS,
+    }) as {
+      answers: Record<string, any>;
+      usage?: { inputTokens?: number };
+    };
+    const postureRaw = String(answers.posture?.choice ?? "both");
+    const posture: ModelPosture = (["both", "bid_only", "ask_only", "pull", "flatten"] as const).includes(postureRaw as ModelPosture)
+      ? postureRaw as ModelPosture : "both";
+    const regimeRaw = String(answers.regime?.choice ?? "quiet");
+    const regime: Regime = (["quiet", "trend", "toxic", "event", "stale_vs_cex"] as const).includes(regimeRaw as Regime)
+      ? regimeRaw as Regime : "quiet";
+    const widthScore = Number(answers.width?.score ?? 0);
+    const sizeScore = Number(answers.size?.score ?? 2);
+    const probabilities = (answers.posture?.probabilities ?? {}) as Record<string, number>;
+    return {
+      toxic: clip01(Number(answers.toxic?.noul ?? answers.toxic ?? 0)),
+      stale: clip01(Number(answers.stale?.noul ?? answers.stale ?? 0)),
+      hold: clip01(Number(answers.hold?.noul ?? answers.hold ?? 0)),
+      posture,
+      widthTicks: Math.max(0, Math.min(3, Math.round(widthScore))),
+      sizeMult: sizeScore <= 0 ? 0 : sizeScore <= 1 ? 0.5 : sizeScore >= 3 ? 2 : 1,
+      regime,
+      probabilities: Object.keys(probabilities).length ? probabilities : { [posture]: 1 },
+      latencyMs: Date.now() - t0,
+      inputTokens: usage?.inputTokens ?? 0,
+      skipped: false,
+    };
+  }
+}
+
+export function createModel(): Model {
+  if (config.model === "jev" && config.typesafeKey) return new JevModel();
+  if (config.model === "luna" && config.lunaApiKey) return new LunaModel();
+  return new MockModel();
+}
+
+export function withTimeout(model: Model, ms = 180): Model {
+  return {
+    name: model.name,
+    async decide(state) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          model.decide(state),
+          new Promise<Answers>((_, rej) => { timer = setTimeout(() => rej(new Error("model timeout")), ms); }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    },
+  };
+}

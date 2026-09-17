@@ -1,0 +1,27 @@
+{
+  "name": "sit",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "test": "bun test",
+    "sync-types": "cp src/types.ts web/src/lib/types.ts",
+    "check-schema": "bun run scripts/check-schema.ts",
+    "bench-read": "bun run scripts/bench-read.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@ai-sdk/typesafe-ai": "^3.0.0",
+    "@kuru-labs/kuru-sdk": "^0.0.95",
+    "ai": "^7.0.103",
+    "ethers": "5"
+  }
+}

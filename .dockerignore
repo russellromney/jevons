@@ -1,0 +1,8 @@
+web
+data
+node_modules
+.git
+.env
+*.md
+scripts
+src/*.test.ts
