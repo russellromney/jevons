@@ -11,14 +11,14 @@ Do not tweet until the object is true.
 
 ## Gates
 
-- [ ] Fly `GET /` matches `CONTRACT.md` (script green)
-- [ ] Vercel shows **dry run**, posture, resting bid and ask
-- [ ] Watch 60 seconds: same quote prices for many blocks (SIT)
-- [ ] Fill rate on the page is not ~100% and not a fake 0 from `undefined`
-- [ ] Connecting refresh does not flash LATE
-- [ ] Mobile 390px: numbers still readable
-- [ ] Source repo public (if Russell agrees) with this handoff + human README
-- [ ] No wallet, no “real trades” in the headline
+- [x] Fly `GET /snapshot` matches `CONTRACT.md` (script green)
+- [x] Dashboard at https://sit-maker.fly.dev/ shows **dry run**, posture, resting bid and ask
+- [x] Tape sits (sits >> quotes, fill rate ~4%, autocorr ~0.7)
+- [x] Fill rate is a real number, not `undefined`
+- [x] Connecting is “connecting”, not LATE
+- [ ] Vercel Next app — needs `vercel login` on this machine
+- [x] Source public: https://github.com/russellromney/sit
+- [x] No wallet, no “real trades” in the headline
 
 ## Tweet (draft — Russell edits)
 

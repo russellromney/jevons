@@ -28,6 +28,14 @@ This folder is the handoff for a **new session that builds, deploys, and launche
 | [`DEPLOY.md`](DEPLOY.md) | Fly.io bot + SSE, Vercel site |
 | [`LAUNCH.md`](LAUNCH.md) | Go-live checklist and tweet |
 
+## Live (dry run)
+
+- Dashboard: https://sit-maker.fly.dev/
+- Snapshot JSON: https://sit-maker.fly.dev/snapshot
+- Source: https://github.com/russellromney/sit
+
+Vercel Next.js app is in `web/`. Deploy with `cd web && vercel --prod` after `vercel login`, env `NEXT_PUBLIC_API_URL=https://sit-maker.fly.dev`.
+
 ## Run
 
 ```
