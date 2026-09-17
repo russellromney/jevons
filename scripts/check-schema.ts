@@ -10,7 +10,7 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-const res = await fetch(url + "/");
+const res = await fetch(url + "/snapshot").catch(() => fetch(url + "/"));
 if (!res.ok) fail(`GET / ${res.status}`);
 const snap = await res.json() as Record<string, unknown>;
 if (snap.name !== "sit") fail("name !== sit");

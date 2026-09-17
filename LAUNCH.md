@@ -2,6 +2,13 @@
 
 Do not tweet until the object is true.
 
+## Live (dry-run)
+
+- API snapshot: https://sit-maker.fly.dev/snapshot
+- Dashboard: https://sit-maker.fly.dev/
+- Source: https://github.com/russellromney/sit
+- Vercel: pending CLI login (`vercel login`), then `cd web && vercel --prod` with `NEXT_PUBLIC_API_URL=https://sit-maker.fly.dev`
+
 ## Gates
 
 - [ ] Fly `GET /` matches `CONTRACT.md` (script green)

@@ -112,9 +112,7 @@ const clip01 = (x: number) => Math.min(1, Math.max(0, x));
 export function mockAnswers(state: ModelState): Answers {
   const vol = state.trades.buyMon + state.trades.sellMon;
   const cvd = vol > 0 ? Math.abs(state.trades.cvdMon) / vol : 0;
-  const spreadHot = state.spreadBps > 2 * Math.max(state.spreadBps * 0 + 4, 4) ? 1 : state.spreadBps > 8 ? 1 : 0;
-  // median isn't in state; use 4 bps as quiet typical for this pair, extra if spread is wide
-  const toxic = clip01(sigmoid(cvd * 3 + (state.spreadBps > 8 ? 2 : 0) - 1.2));
+  const toxic = clip01(sigmoid(cvd * 2.5 + (state.spreadBps > 10 ? 1.5 : 0) - 2.5));
   const stale = state.basisBps == null ? 0 : clip01(sigmoid(Math.abs(state.basisBps) / 2 - 1));
   const hold = state.last.blocksSinceQuoteChange > 0 && Math.abs(state.returnsBps.last1) < 1 && toxic < 0.4 ? 0.85 : 0.2;
   const max = config.maxPositionMon;

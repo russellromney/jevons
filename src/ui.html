@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>sit — a market maker that sits</title>
+<style>
+:root{--bg:#fff;--panel:#f5f4f1;--border:#ececea;--ink:#0a0a0a;--muted:#77776f;--page:#f0eee9;--dry:#fbeed3;--dryink:#8a5b0e;--mod:#ebe7fc;--modink:#4c3ebb;--pos:#0e9f5d;--neg:#de3b32}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);font:14px/1.4 -apple-system,BlinkMacSystemFont,sans-serif}
+.card{max-width:min(1400px,calc(100% - 32px));margin:16px auto;background:var(--bg);border:1px solid var(--border);border-radius:18px;padding:16px 20px 20px}
+h1{margin:0;font-size:20px;letter-spacing:-.02em}
+.row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+.muted{color:var(--muted)}.mono{font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace}
+.badge{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:999px}
+.dry{background:var(--dry);color:var(--dryink)}.mod{background:var(--mod);color:var(--modink)}
+.dot{width:8px;height:8px;border-radius:50%;background:#ccc;display:inline-block}
+.live{background:#4ade80}
+.stats{display:flex;flex-wrap:wrap;gap:8px 18px;margin:10px 0 16px;color:var(--muted);font-size:13px}
+.grid{display:grid;grid-template-columns:1.3fr 1fr;gap:16px}
+.panel{background:var(--panel);border-radius:12px;padding:14px 16px}
+.k{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.posture{font-size:40px;font-weight:650;letter-spacing:-.04em;margin:0 0 8px;text-transform:uppercase}
+.bar{display:grid;grid-template-columns:56px 1fr 40px;gap:8px;align-items:center;font-size:12px;margin:6px 0}
+.track{height:8px;background:#e8e6df;border-radius:99px;overflow:hidden}
+.fill{height:100%;background:#5b6abf;border-radius:99px}
+.qs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.q{background:#fff;border-radius:8px;padding:10px 12px}
+.qn{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.qp{font-size:16px;font-weight:600;margin-top:2px}
+.chart{height:120px;display:flex;align-items:flex-end;gap:1px;margin:8px 0}
+.cell{flex:1;min-width:2px;border-radius:1px 1px 0 0}
+.tape{max-height:260px;overflow:auto;font-size:12px}
+.tr{display:grid;grid-template-columns:88px 72px 1fr 64px 48px;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)}
+foot{display:block;margin-top:16px;font-size:12px;color:var(--muted)}
+a{color:inherit}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.posture{font-size:32px}}
+</style>
+<body>
+<div class="card">
+  <div class="row">
+    <h1>sit</h1>
+    <span class="dot" id="dot"></span>
+    <span class="muted" id="conn">connecting</span>
+    <span class="mono muted" id="block"></span>
+    <span class="badge dry" id="dry">dry run</span>
+    <span class="badge mod" id="model">—</span>
+    <span class="muted" id="wallet">no wallet</span>
+    <span class="mono muted" id="up" style="margin-left:auto">00:00:00</span>
+  </div>
+  <div class="stats mono" id="stats"></div>
+  <div class="grid">
+    <div class="panel">
+      <p class="k">posture this block</p>
+      <p class="posture" id="posture">connecting</p>
+      <p class="muted" id="note">waiting for the feed</p>
+      <div id="bars"></div>
+      <div class="qs">
+        <div class="q"><div class="qn" style="color:#0fa968">bid</div><div class="qp mono" id="bid">—</div></div>
+        <div class="q"><div class="qn" style="color:#e4573d">ask</div><div class="qp mono" id="ask">—</div></div>
+      </div>
+      <p class="muted" id="mid" style="margin-top:10px"></p>
+    </div>
+    <div class="panel">
+      <p class="k">last 120 blocks — solid = sent, faded = sat</p>
+      <div class="chart" id="chart"></div>
+      <p class="k" style="margin-top:12px">tape</p>
+      <div class="tape mono" id="tape"></div>
+    </div>
+  </div>
+  <foot>Experimental paper market maker on Kuru MON-USDC / Monad. The model scores toxic / stale / hold; code quotes both sides and sits. Not financial advice. Dry run: simulated through-price fills only. <a href="https://github.com/russellromney/sit">source</a></foot>
+</div>
+<script>
+const C={both:"#5b6abf",bid_only:"#0fa968",ask_only:"#e4573d",pull:"#98968e",flatten:"#c98a1b",sit:"#5b6abf",late:"#c98a1b"};
+let meta=null, events=[], started=Date.now();
+const $ = id => document.getElementById(id);
+function fmtP(n){return Number(n).toFixed(6)}
+function fmtU(n){const v=Number(n)||0;return (v<0?"-":"")+"$"+Math.abs(v).toFixed(3)}
+function render(){
+  const e=events.at(-1);
+  $("conn").textContent = meta ? "live" : "connecting";
+  $("dot").className = "dot"+(meta?" live":"");
+  if(meta){ $("model").textContent=meta.model||"mock"; $("dry").style.display=meta.dryRun===false?"none":""; $("wallet").textContent=meta.wallet?meta.wallet.slice(0,6)+"…":"no wallet"; }
+  if(!e){ $("posture").textContent="connecting"; return; }
+  $("block").textContent="block "+e.block.toLocaleString();
+  $("posture").textContent=e.decision.posture;
+  $("posture").style.color=C[e.decision.posture]||"#000";
+  $("note").textContent = e.quote.sent ? "requote — sent a batchUpdate" : e.decision.posture==="pull" ? "pulled — nothing resting" : e.decision.sensors.skipped ? "sat — reused last sensors, no tx" : "sat — quotes unchanged";
+  const s=e.decision.sensors;
+  $("bars").innerHTML=["toxic","stale","hold"].map(k=>`<div class="bar"><span>${k}</span><div class="track"><div class="fill" style="width:${Math.round(s[k]*100)}%"></div></div><span class="mono">${Math.round(s[k]*100)}%</span></div>`).join("");
+  $("bid").textContent=e.quote.bid? e.quote.bid.size+" @ "+fmtP(e.quote.bid.price):"—";
+  $("ask").textContent=e.quote.ask? e.quote.ask.size+" @ "+fmtP(e.quote.ask.price):"—";
+  $("mid").textContent=`mid ${fmtP(e.mid)} · spread ${e.spreadBps.toFixed(2)} bps`+(meta&&!meta.refFeed?" · no ref feed":"");
+  const t=e.totals;
+  $("stats").innerHTML=`<span>latency ${s.latencyMs}ms</span><span>${t.quotes} quotes</span><span>${t.sits} sits</span><span>${t.fills} fills</span><span>fill rate ${Math.round(t.fillRate*100)}%</span><span>late ${t.lateBlocks}</span><span>markout10 ${t.markout10Bps==null?"—":t.markout10Bps.toFixed(2)+" bps"}</span><span style="color:${t.pnlUsd<0?"var(--neg)":"var(--pos)"}">${fmtU(t.pnlUsd)}</span><span>autocorr ${t.postureAutocorr==null?"—":t.postureAutocorr.toFixed(2)}</span>`;
+  const slice=events.slice(-120);
+  $("chart").innerHTML=slice.map(x=>`<div class="cell" style="height:${x.quote.sent?"100%":x.decision.posture==="late"?"40%":"70%"};background:${C[x.decision.posture]||"#ddd"};opacity:${x.quote.sent?1:.55}"></div>`).join("");
+  $("tape").innerHTML=[...events].slice(-24).reverse().map(x=>`<div class="tr"><span>${x.block}</span><span style="color:${C[x.decision.posture]}">${x.decision.posture}</span><span>${x.quote.sent?"requote":x.quote.status}</span><span>${x.fill?x.fill.side+(x.fill.simulated?" sim":""):""}</span><span>${x.decision.sensors.latencyMs}ms</span></div>`).join("");
+}
+setInterval(()=>{
+  const start=meta&&meta.startedAt?meta.startedAt:started;
+  const tot=Math.floor(Math.max(0,Date.now()-start)/1000);
+  const p=n=>n<10?"0"+n:""+n;
+  $("up").textContent=`${p(Math.floor(tot/3600))}:${p(Math.floor(tot%3600/60))}:${p(tot%60)}`;
+},1000);
+const es=new EventSource("/events");
+es.addEventListener("snapshot",ev=>{
+  const d=JSON.parse(ev.data);
+  meta=d; events=Array.isArray(d.history)?d.history:[]; render();
+});
+es.addEventListener("block",ev=>{
+  const e=JSON.parse(ev.data);
+  events.push(e); if(events.length>1000) events=events.slice(-1000); render();
+});
+es.onopen=()=>{$("conn").textContent="live";$("dot").className="dot live"};
+es.onerror=()=>{$("conn").textContent="reconnecting";$("dot").className="dot"};
+render();
+</script>

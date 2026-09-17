@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { join } from "node:path";
 import type { BlockEvent, Fill, Meta, Quote } from "./types";
 
 const CORS = {
@@ -22,7 +23,15 @@ export function startServer(meta: Meta, history: () => BlockEvent[]) {
     fetch(req) {
       const { pathname } = new URL(req.url);
       if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
-      if (pathname === "/") return json({ ...meta, latest: history().at(-1) ?? null });
+      if (pathname === "/snapshot") return json({ ...meta, latest: history().at(-1) ?? null });
+      if (pathname === "/" || pathname === "/app" || pathname === "/ui") {
+        const accept = req.headers.get("accept") ?? "";
+        if (pathname !== "/" || accept.includes("text/html")) {
+          const file = Bun.file(join(import.meta.dir, "ui.html"));
+          return new Response(file, { headers: { ...CORS, "content-type": "text/html; charset=utf-8" } });
+        }
+        return json({ ...meta, latest: history().at(-1) ?? null });
+      }
       if (pathname === "/history") return json(history());
       if (pathname === "/events") {
         const stream = new ReadableStream<Uint8Array>({
