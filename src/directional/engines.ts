@@ -10,6 +10,7 @@ export interface EngineState {
   features: Features;
   reference: ReferencePrice | null;
   health: FeedHealth;
+  equityUsd?: number;
 }
 
 export interface EngineResult {
@@ -18,19 +19,26 @@ export interface EngineResult {
   signals: DirectionalSignals;
 }
 
+const roundTripCostForSize = (state: EngineState, sizeMon: number): number => {
+  const buyVwap = executablePrice(state.book, "buy", sizeMon);
+  const sellVwap = executablePrice(state.book, "sell", sizeMon);
+  if (buyVwap == null || sellVwap == null) return Infinity;
+  const buyImpact = ((buyVwap - state.book.ask) / state.book.ask) * 10_000;
+  const sellImpact = ((state.book.bid - sellVwap) / state.book.bid) * 10_000;
+  const entryCost = state.features.spreadBps / 2 + config.takerFeeBps + config.paperSlippageBps + Math.max(buyImpact, sellImpact);
+  return entryCost * 2;
+};
+
 const costSignals = (state: EngineState): DirectionalSignals => {
   const basisBps = state.reference ? ((state.reference.mid - state.book.mid) / state.book.mid) * 10_000 : null;
-  const buyVwap = executablePrice(state.book, "buy", config.directionalSizeMon);
-  const sellVwap = executablePrice(state.book, "sell", config.directionalSizeMon);
-  const buyImpact = buyVwap ? ((buyVwap - state.book.ask) / state.book.ask) * 10_000 : Infinity;
-  const sellImpact = sellVwap ? ((state.book.bid - sellVwap) / state.book.bid) * 10_000 : Infinity;
-  const entryCostBps = state.features.spreadBps / 2 + config.takerFeeBps + config.paperSlippageBps + Math.max(buyImpact, sellImpact);
+  const roundTripCostBps = roundTripCostForSize(state, config.directionalSizeMon);
+  const entryCostBps = roundTripCostBps / 2;
   return {
     basisBps,
     referenceReturnBps: state.reference?.ret1Bps ?? null,
     kuruReturnBps: state.features.ret5,
     entryCostBps,
-    roundTripCostBps: entryCostBps * 2,
+    roundTripCostBps,
     residualBps: state.reference ? state.reference.ret1Bps - state.features.ret5 : null,
   };
 };
@@ -38,17 +46,29 @@ const hold = (state: EngineState, holdReason: string): EngineResult => ({ candid
 const direction = (x: number): "buy" | "sell" => x >= 0 ? "buy" : "sell";
 const costs = (state: EngineState) => costSignals(state).roundTripCostBps;
 
-/** Scale a paper order with measured net edge, then cap it by risk and displayed depth. */
+/** Scale paper notional from current equity, then cap it by displayed depth. */
 export function sizeForEdge(state: EngineState, action: "buy" | "sell", edgeBps: number): number {
   const levels = action === "buy" ? state.book.levels.asks : state.book.levels.bids;
   const displayed = levels.reduce((sum, [, size]) => sum + size, 0);
   const range = Math.max(5, config.minExpectedEdgeBps);
   const conviction = Math.max(0, Math.min(1, (edgeBps - config.minExpectedEdgeBps) / range));
-  const desired = config.minDirectionalSizeMon
-    + (config.maxDirectionalSizeMon - config.minDirectionalSizeMon) * conviction ** 2;
+  const leverage = config.minPaperLeverage
+    + (config.maxPaperLeverage - config.minPaperLeverage) * conviction ** 2;
+  const equity = Math.max(1, state.equityUsd ?? config.bankrollUsd);
+  const desired = equity * leverage / state.book.mid;
   const cap = Math.min(config.maxDirectionalSizeMon, displayed * 0.5);
   if (cap < config.minDirectionalSizeMon) return 0;
-  return Math.floor(Math.max(config.minDirectionalSizeMon, Math.min(desired, cap)) / 5) * 5;
+  const grossEdgeBps = edgeBps + costs(state);
+  const viable = (size: number) => grossEdgeBps - roundTripCostForSize(state, size) >= config.minExpectedEdgeBps;
+  if (!viable(config.minDirectionalSizeMon)) return 0;
+  let low = Math.floor(config.minDirectionalSizeMon / 5);
+  let high = Math.floor(Math.min(desired, cap) / 5);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (viable(mid * 5)) low = mid;
+    else high = mid - 1;
+  }
+  return low * 5;
 }
 
 /** Let a real Jev confirmation amplify size, without allowing it to bypass hard caps. */
@@ -86,7 +106,7 @@ function cexLag(state: EngineState): EngineResult {
   return {
     candidate: {
       action, sizeMon, reason: `reference leads Kuru by ${unabsorbedMoveBps.toFixed(1)} bps`, expectedEdgeBps: edge,
-      horizonBlocks: 10, stopBps: 12, takeProfitBps: Math.min(Math.abs(unabsorbedMoveBps), 24), hedged: false,
+      horizonBlocks: 200, stopBps: 25, takeProfitBps: 50, hedged: false,
       requiredFeeds: ["kuru", "reference"],
     }, holdReason: "", signals,
   };
@@ -135,7 +155,7 @@ function meanReversion(state: EngineState): EngineResult {
   return {
     candidate: {
       action, sizeMon, reason: `local ${shock.toFixed(1)} bps shock with stable reference`, expectedEdgeBps: edge,
-      horizonBlocks: 40, stopBps: 14, takeProfitBps: Math.max(8, edge * 0.5), hedged: false,
+      horizonBlocks: 200, stopBps: 25, takeProfitBps: 50, hedged: false,
       requiredFeeds: ["kuru", "reference"],
     }, holdReason: "", signals: costSignals(state),
   };

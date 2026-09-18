@@ -75,7 +75,7 @@ export class DirectionalTrader {
     let gate = null;
     let signals: DirectionalSignals = { basisBps, referenceReturnBps: reference?.ret1Bps ?? null, kuruReturnBps: features.ret5, entryCostBps: 0, roundTripCostBps: 0, residualBps: null };
     if (!exit) {
-      const evaluated = evaluateStrategy(this.active, { block, book, features, reference, health });
+      const evaluated = evaluateStrategy(this.active, { block, book, features, reference, health, equityUsd: this.paper.portfolio(book.mid).equityUsd });
       candidate = evaluated.candidate; reason = evaluated.holdReason; signals = evaluated.signals;
       if (candidate) {
         if (config.model === "jev" && config.typesafeKey) this.paper.totals.llmCalls++;

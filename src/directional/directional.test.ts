@@ -26,14 +26,14 @@ describe("directional engines", () => {
       reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 18, updatedAt: Date.now() } });
     expect(out.candidate?.action).toBe("buy");
     expect(out.candidate?.expectedEdgeBps).toBeGreaterThan(0);
-    expect(out.candidate?.horizonBlocks).toBe(10);
+    expect(out.candidate?.horizonBlocks).toBe(200);
   });
 
   test("sizes stronger edges larger and lets Jev conviction amplify them", () => {
-    const deepBook: Book = { ...book, levels: { bids: [[100, 100_000]], asks: [[100.1, 100_000]] } };
-    const weak = evaluateStrategy("cex_lag", { block: 1, book: deepBook, features, health,
+    const deepBook: Book = { ...book, levels: { bids: [[100, 1_000_000]], asks: [[100.1, 1_000_000]] } };
+    const weak = evaluateStrategy("cex_lag", { block: 1, book: deepBook, features, health, equityUsd: 100_000,
       reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 15, updatedAt: Date.now() } });
-    const strong = evaluateStrategy("cex_lag", { block: 1, book: deepBook, features, health,
+    const strong = evaluateStrategy("cex_lag", { block: 1, book: deepBook, features, health, equityUsd: 100_000,
       reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 18, updatedAt: Date.now() } });
     expect(weak.candidate?.sizeMon).toBeGreaterThanOrEqual(500);
     expect(strong.candidate!.sizeMon).toBeGreaterThan(weak.candidate!.sizeMon);
@@ -42,7 +42,7 @@ describe("directional engines", () => {
       transientShock: 0, eventMaterial: 0, reason: "strong", latencyMs: 1,
     }, deepBook);
     expect(amplified.sizeMon).toBeGreaterThan(strong.candidate!.sizeMon);
-    expect(amplified.sizeMon).toBeLessThanOrEqual(10_000);
+    expect(amplified.sizeMon).toBeLessThanOrEqual(250_000);
   });
 
   test("CEX lag does not use a static venue-price level as a directional edge", () => {
@@ -91,6 +91,19 @@ describe("directional paper execution", () => {
     expect(paper.portfolio(100.05)).toMatchObject({ cashUsd: 50_100, mon: -500, positionValueUsd: -50_025, equityUsd: 75 });
     paper.update(11, book);
     expect(paper.portfolio(100.05)).toMatchObject({ cashUsd: 50, mon: 0, positionValueUsd: 0, equityUsd: 50 });
+  });
+
+  test("trails a profitable move instead of waiting for maximum holding time", () => {
+    const paper = new PaperExecutor();
+    const candidate = { action: "buy" as const, sizeMon: 150, reason: "test", expectedEdgeBps: 20, horizonBlocks: 200, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
+    paper.consider(10, book, candidate, true, "");
+    const advance: Book = { ...book, bid: 100.29, ask: 100.31, mid: 100.3, levels: { bids: [[100.29, 1000]], asks: [[100.31, 1000]] } };
+    expect(paper.update(11, advance)).toBeNull();
+    const pullback: Book = { ...book, bid: 100.22, ask: 100.24, mid: 100.23, levels: { bids: [[100.22, 1000]], asks: [[100.24, 1000]] } };
+    const closed = paper.update(12, pullback);
+    expect(closed?.status).toBe("closed");
+    expect(closed?.note).toBe("trailing profit");
+    expect(closed?.realizedPnlUsd).toBeGreaterThan(0);
   });
 });
 

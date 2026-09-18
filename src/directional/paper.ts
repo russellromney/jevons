@@ -15,6 +15,7 @@ export class PaperExecutor {
   private expiryBlock: number | null = null;
   private stopPrice: number | null = null;
   private takeProfitPrice: number | null = null;
+  private favorablePrice: number | null = null;
   private realizedUsd = 0;
   private feesUsd = 0;
   private cashUsd = config.bankrollUsd;
@@ -44,6 +45,7 @@ export class PaperExecutor {
     this.expiryBlock = p.expiryBlock;
     this.stopPrice = p.stopPrice;
     this.takeProfitPrice = p.takeProfitPrice;
+    this.favorablePrice = event.mid;
     this.cashUsd = event.portfolio.cashUsd;
     this.realizedUsd = event.totals.realizedUsd;
     this.feesUsd = event.totals.feesUsd;
@@ -62,11 +64,21 @@ export class PaperExecutor {
     this.peakPnl = Math.max(this.peakPnl, this.totals.pnlUsd);
     this.totals.maxDrawdownUsd = Math.min(this.totals.maxDrawdownUsd, this.totals.pnlUsd - this.peakPnl);
     if (this.side === "flat") return null;
+    this.favorablePrice = this.side === "long"
+      ? Math.max(this.favorablePrice ?? book.mid, book.mid)
+      : Math.min(this.favorablePrice ?? book.mid, book.mid);
     const stopped = this.side === "long" ? book.mid <= (this.stopPrice ?? -Infinity) : book.mid >= (this.stopPrice ?? Infinity);
     const target = this.side === "long" ? book.mid >= (this.takeProfitPrice ?? Infinity) : book.mid <= (this.takeProfitPrice ?? -Infinity);
+    const favorableBps = this.entry == null || this.favorablePrice == null ? 0 : this.side === "long"
+      ? (this.favorablePrice - this.entry) / this.entry * 10_000
+      : (this.entry - this.favorablePrice) / this.entry * 10_000;
+    const givebackBps = this.favorablePrice == null ? 0 : this.side === "long"
+      ? (this.favorablePrice - book.mid) / this.favorablePrice * 10_000
+      : (book.mid - this.favorablePrice) / this.favorablePrice * 10_000;
     if (stopped) return this.close(block, book, "stop");
     if (target) return this.close(block, book, "take profit");
-    if (block >= (this.expiryBlock ?? Infinity)) return this.close(block, book, "signal expired");
+    if (favorableBps >= config.trailActivationBps && givebackBps >= config.trailGivebackBps) return this.close(block, book, "trailing profit");
+    if (block >= (this.expiryBlock ?? Infinity)) return this.close(block, book, "maximum holding time");
     if (this.totals.pnlUsd <= -config.maxLossUsd) return this.close(block, book, "max loss");
     return null;
   }
@@ -89,6 +101,7 @@ export class PaperExecutor {
     this.cashUsd += candidate.action === "buy" ? -notionalUsd - fee : notionalUsd - fee;
     this.side = candidate.action === "buy" ? "long" : "short";
     this.sizeMon = size;
+    this.favorablePrice = book.mid;
     this.entry = px; this.openedBlock = block; this.expiryBlock = block + candidate.horizonBlocks;
     this.stopPrice = this.side === "long" ? px * (1 - candidate.stopBps / 10_000) : px * (1 + candidate.stopBps / 10_000);
     this.takeProfitPrice = this.side === "long" ? px * (1 + candidate.takeProfitBps / 10_000) : px * (1 - candidate.takeProfitBps / 10_000);
@@ -108,7 +121,7 @@ export class PaperExecutor {
     const pnl = sign * size * (px - (this.entry ?? px));
     this.cashUsd += action === "buy" ? -notionalUsd - fee : notionalUsd - fee;
     this.realizedUsd += pnl; this.feesUsd += fee; this.totals.closed++; if (pnl >= 0) this.totals.wins++; else this.totals.losses++;
-    this.side = "flat"; this.sizeMon = 0; this.entry = null; this.openedBlock = null; this.expiryBlock = null; this.stopPrice = null; this.takeProfitPrice = null;
+    this.side = "flat"; this.sizeMon = 0; this.entry = null; this.openedBlock = null; this.expiryBlock = null; this.stopPrice = null; this.takeProfitPrice = null; this.favorablePrice = null;
     return { status: "closed", action, price: px, size, feeUsd: fee, slippageBps: impactBps(book, action, raw), notionalUsd, realizedPnlUsd: pnl - fee, simulated: true, note };
   }
 

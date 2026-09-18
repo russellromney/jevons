@@ -58,6 +58,10 @@ export const config = {
   paperSlippageBps: Number(env("PAPER_SLIPPAGE_BPS", "0")),
   directionalSizeMon: Number(env("DIRECTIONAL_SIZE_MON", "500")),
   minDirectionalSizeMon: Number(env("MIN_DIRECTIONAL_SIZE_MON", "500")),
-  maxDirectionalSizeMon: Number(env("MAX_DIRECTIONAL_SIZE_MON", "10000")),
+  maxDirectionalSizeMon: Number(env("MAX_DIRECTIONAL_SIZE_MON", "250000")),
+  minPaperLeverage: Number(env("MIN_PAPER_LEVERAGE", "5")),
+  maxPaperLeverage: Number(env("MAX_PAPER_LEVERAGE", "50")),
+  trailActivationBps: Number(env("TRAIL_ACTIVATION_BPS", "12")),
+  trailGivebackBps: Number(env("TRAIL_GIVEBACK_BPS", "6")),
   minExpectedEdgeBps: Number(env("MIN_EXPECTED_EDGE_BPS", "5")),
 };
