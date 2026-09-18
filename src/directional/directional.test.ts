@@ -23,17 +23,18 @@ describe("directional engines", () => {
 
   test("CEX lag requires an unabsorbed reference move that clears costs", () => {
     const out = evaluateStrategy("cex_lag", { block: 1, book, features, health,
-      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 15, updatedAt: Date.now() } });
+      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 18, updatedAt: Date.now() } });
     expect(out.candidate?.action).toBe("buy");
     expect(out.candidate?.expectedEdgeBps).toBeGreaterThan(0);
+    expect(out.candidate?.horizonBlocks).toBe(10);
   });
 
   test("sizes stronger edges larger and lets Jev conviction amplify them", () => {
     const deepBook: Book = { ...book, levels: { bids: [[100, 100_000]], asks: [[100.1, 100_000]] } };
     const weak = evaluateStrategy("cex_lag", { block: 1, book: deepBook, features, health,
-      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 12, updatedAt: Date.now() } });
-    const strong = evaluateStrategy("cex_lag", { block: 1, book: deepBook, features, health,
       reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 15, updatedAt: Date.now() } });
+    const strong = evaluateStrategy("cex_lag", { block: 1, book: deepBook, features, health,
+      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 18, updatedAt: Date.now() } });
     expect(weak.candidate?.sizeMon).toBeGreaterThanOrEqual(500);
     expect(strong.candidate!.sizeMon).toBeGreaterThan(weak.candidate!.sizeMon);
     const amplified = applyGateConviction("cex_lag", strong.candidate!, {

@@ -59,5 +59,5 @@ export const config = {
   directionalSizeMon: Number(env("DIRECTIONAL_SIZE_MON", "500")),
   minDirectionalSizeMon: Number(env("MIN_DIRECTIONAL_SIZE_MON", "500")),
   maxDirectionalSizeMon: Number(env("MAX_DIRECTIONAL_SIZE_MON", "10000")),
-  minExpectedEdgeBps: Number(env("MIN_EXPECTED_EDGE_BPS", "2")),
+  minExpectedEdgeBps: Number(env("MIN_EXPECTED_EDGE_BPS", "5")),
 };

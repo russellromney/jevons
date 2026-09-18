@@ -42,7 +42,7 @@ const costs = (state: EngineState) => costSignals(state).roundTripCostBps;
 export function sizeForEdge(state: EngineState, action: "buy" | "sell", edgeBps: number): number {
   const levels = action === "buy" ? state.book.levels.asks : state.book.levels.bids;
   const displayed = levels.reduce((sum, [, size]) => sum + size, 0);
-  const range = Math.max(10, config.minExpectedEdgeBps);
+  const range = Math.max(5, config.minExpectedEdgeBps);
   const conviction = Math.max(0, Math.min(1, (edgeBps - config.minExpectedEdgeBps) / range));
   const desired = config.minDirectionalSizeMon
     + (config.maxDirectionalSizeMon - config.minDirectionalSizeMon) * conviction ** 2;
@@ -86,7 +86,7 @@ function cexLag(state: EngineState): EngineResult {
   return {
     candidate: {
       action, sizeMon, reason: `reference leads Kuru by ${unabsorbedMoveBps.toFixed(1)} bps`, expectedEdgeBps: edge,
-      horizonBlocks: 25, stopBps: 12, takeProfitBps: Math.min(Math.abs(unabsorbedMoveBps), 24), hedged: false,
+      horizonBlocks: 10, stopBps: 12, takeProfitBps: Math.min(Math.abs(unabsorbedMoveBps), 24), hedged: false,
       requiredFeeds: ["kuru", "reference"],
     }, holdReason: "", signals,
   };
