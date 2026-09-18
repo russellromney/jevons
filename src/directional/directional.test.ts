@@ -29,18 +29,19 @@ describe("directional engines", () => {
   });
 
   test("sizes stronger edges larger and lets Jev conviction amplify them", () => {
-    const weak = evaluateStrategy("cex_lag", { block: 1, book, features, health,
+    const deepBook: Book = { ...book, levels: { bids: [[100, 100_000]], asks: [[100.1, 100_000]] } };
+    const weak = evaluateStrategy("cex_lag", { block: 1, book: deepBook, features, health,
       reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 12, updatedAt: Date.now() } });
-    const strong = evaluateStrategy("cex_lag", { block: 1, book, features, health,
+    const strong = evaluateStrategy("cex_lag", { block: 1, book: deepBook, features, health,
       reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 15, updatedAt: Date.now() } });
-    expect(weak.candidate?.sizeMon).toBeGreaterThanOrEqual(25);
+    expect(weak.candidate?.sizeMon).toBeGreaterThanOrEqual(500);
     expect(strong.candidate!.sizeMon).toBeGreaterThan(weak.candidate!.sizeMon);
     const amplified = applyGateConviction("cex_lag", strong.candidate!, {
       used: true, accepted: true, continuation: 1, exhaustion: 0, forcedFlow: 0,
       transientShock: 0, eventMaterial: 0, reason: "strong", latencyMs: 1,
-    }, book);
+    }, deepBook);
     expect(amplified.sizeMon).toBeGreaterThan(strong.candidate!.sizeMon);
-    expect(amplified.sizeMon).toBeLessThanOrEqual(500);
+    expect(amplified.sizeMon).toBeLessThanOrEqual(10_000);
   });
 
   test("CEX lag does not use a static venue-price level as a directional edge", () => {
@@ -80,6 +81,15 @@ describe("directional paper execution", () => {
     const result = paper.consider(10, shallow, candidate, true, "");
     expect(result.status).toBe("rejected");
     expect(result.note).toContain("insufficient displayed depth");
+  });
+
+  test("marks short proceeds and the MON liability into net equity", () => {
+    const paper = new PaperExecutor();
+    const candidate = { action: "sell" as const, sizeMon: 500, reason: "test", expectedEdgeBps: 20, horizonBlocks: 1, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
+    paper.consider(10, book, candidate, true, "");
+    expect(paper.portfolio(100.05)).toMatchObject({ cashUsd: 50_100, mon: -500, positionValueUsd: -50_025, equityUsd: 75 });
+    paper.update(11, book);
+    expect(paper.portfolio(100.05)).toMatchObject({ cashUsd: 50, mon: 0, positionValueUsd: 0, equityUsd: 50 });
   });
 });
 

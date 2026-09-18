@@ -56,8 +56,8 @@ export const config = {
   takerFeeBps: Number(env("PAPER_TAKER_FEE_BPS", "0")),
   // Extra buffer on top of measured order-book VWAP impact.
   paperSlippageBps: Number(env("PAPER_SLIPPAGE_BPS", "0")),
-  directionalSizeMon: Number(env("DIRECTIONAL_SIZE_MON", "100")),
-  minDirectionalSizeMon: Number(env("MIN_DIRECTIONAL_SIZE_MON", "25")),
-  maxDirectionalSizeMon: Number(env("MAX_DIRECTIONAL_SIZE_MON", env("MAX_POSITION_MON", "1000"))),
+  directionalSizeMon: Number(env("DIRECTIONAL_SIZE_MON", "500")),
+  minDirectionalSizeMon: Number(env("MIN_DIRECTIONAL_SIZE_MON", "500")),
+  maxDirectionalSizeMon: Number(env("MAX_DIRECTIONAL_SIZE_MON", "10000")),
   minExpectedEdgeBps: Number(env("MIN_EXPECTED_EDGE_BPS", "2")),
 };

@@ -46,7 +46,7 @@ export function sizeForEdge(state: EngineState, action: "buy" | "sell", edgeBps:
   const conviction = Math.max(0, Math.min(1, (edgeBps - config.minExpectedEdgeBps) / range));
   const desired = config.minDirectionalSizeMon
     + (config.maxDirectionalSizeMon - config.minDirectionalSizeMon) * conviction ** 2;
-  const cap = Math.min(config.maxDirectionalSizeMon, config.maxPositionMon, displayed * 0.5);
+  const cap = Math.min(config.maxDirectionalSizeMon, displayed * 0.5);
   if (cap < config.minDirectionalSizeMon) return 0;
   return Math.floor(Math.max(config.minDirectionalSizeMon, Math.min(desired, cap)) / 5) * 5;
 }
@@ -66,7 +66,7 @@ export function applyGateConviction(strategy: StrategyId, candidate: Candidate, 
   const multiplier = 0.5 + 1.5 * Math.max(0, Math.min(1, conviction));
   const levels = candidate.action === "buy" ? book.levels.asks : book.levels.bids;
   const displayed = levels.reduce((sum, [, size]) => sum + size, 0);
-  const cap = Math.min(config.maxDirectionalSizeMon, config.maxPositionMon, displayed * 0.5);
+  const cap = Math.min(config.maxDirectionalSizeMon, displayed * 0.5);
   const scaled = Math.floor(Math.min(cap, candidate.sizeMon * multiplier) / 5) * 5;
   const sizeMon = Math.max(config.minDirectionalSizeMon, scaled);
   return { ...candidate, sizeMon };
