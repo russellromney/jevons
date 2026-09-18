@@ -26,8 +26,7 @@ describe("directional engines", () => {
       reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 18, updatedAt: Date.now() } });
     expect(out.candidate?.action).toBe("buy");
     expect(out.candidate?.expectedEdgeBps).toBeGreaterThan(0);
-    expect(out.candidate?.horizonBlocks).toBe(0);
-    expect(out.candidate?.maxHoldMs).toBe(90_000);
+    expect(out.candidate?.horizonBlocks).toBe(200);
   });
 
   test("sizes stronger edges larger and lets Jev conviction amplify them", () => {
@@ -56,14 +55,14 @@ describe("directional engines", () => {
 });
 
 describe("directional paper execution", () => {
-  test("opens at the executable ask and exits at its wall-clock failsafe", () => {
+  test("opens at the executable ask and exits at expiry", () => {
     const paper = new PaperExecutor();
-    const candidate = { action: "buy" as const, sizeMon: 150, reason: "test", expectedEdgeBps: 20, maxHoldMs: 1, horizonBlocks: 0, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
-    const opened = paper.consider(10, book, candidate, true, "", "cex_lag", 1_000);
+    const candidate = { action: "buy" as const, sizeMon: 150, reason: "test", expectedEdgeBps: 20, horizonBlocks: 1, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
+    const opened = paper.consider(10, book, candidate, true, "");
     expect(opened.status).toBe("opened");
     expect(opened.price).toBe(100.1);
     expect(paper.portfolio(100.05)).toMatchObject({ mon: 150, cashUsd: -14915, equityUsd: 92.5 });
-    const closed = paper.update(11, { ...book, mid: 100.3, bid: 100.25, ask: 100.35 }, true, null, 1_001);
+    const closed = paper.update(11, { ...book, mid: 100.3, bid: 100.25, ask: 100.35 });
     expect(closed?.status).toBe("closed");
     expect(paper.position(100.3).side).toBe("flat");
     expect(paper.portfolio(100.3)).toMatchObject({ mon: 0, cashUsd: 85, equityUsd: 85 });
@@ -87,10 +86,10 @@ describe("directional paper execution", () => {
 
   test("marks short proceeds and the MON liability into net equity", () => {
     const paper = new PaperExecutor();
-    const candidate = { action: "sell" as const, sizeMon: 500, reason: "test", expectedEdgeBps: 20, maxHoldMs: 1, horizonBlocks: 0, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
-    paper.consider(10, book, candidate, true, "", "cex_lag", 1_000);
+    const candidate = { action: "sell" as const, sizeMon: 500, reason: "test", expectedEdgeBps: 20, horizonBlocks: 1, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
+    paper.consider(10, book, candidate, true, "");
     expect(paper.portfolio(100.05)).toMatchObject({ cashUsd: 50_100, mon: -500, positionValueUsd: -50_025, equityUsd: 75 });
-    paper.update(11, book, true, null, 1_001);
+    paper.update(11, book);
     expect(paper.portfolio(100.05)).toMatchObject({ cashUsd: 50, mon: 0, positionValueUsd: 0, equityUsd: 50 });
   });
 
@@ -106,15 +105,6 @@ describe("directional paper execution", () => {
     expect(closed?.note).toBe("trailing profit");
     expect(closed?.realizedPnlUsd).toBeGreaterThan(0);
   });
-
-  test("closes immediately when the trade thesis is invalidated", () => {
-    const paper = new PaperExecutor();
-    const candidate = { action: "buy" as const, sizeMon: 150, reason: "test", expectedEdgeBps: 20, maxHoldMs: 90_000, horizonBlocks: 0, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
-    paper.consider(10, book, candidate, true, "", "cex_lag", 1_000);
-    const closed = paper.update(11, book, true, "thesis invalidated: reference impulse reversed", 1_001);
-    expect(closed?.status).toBe("closed");
-    expect(closed?.note).toContain("thesis invalidated");
-  });
 });
 
 test("directional wire event round-trips without maker fields", () => {
@@ -124,7 +114,7 @@ test("directional wire event round-trips without maker fields", () => {
     signals: { basisBps: null, referenceReturnBps: null, kuruReturnBps: 0, entryCostBps: 0, roundTripCostBps: 0, residualBps: null },
     decision: { strategy: "cex_lag", action: "hold", reason: "reference unavailable", candidate: null, jev: null, late: false },
     execution: { status: "held", action: "hold", price: null, size: 0, feeUsd: 0, slippageBps: 0, notionalUsd: 0, realizedPnlUsd: null, simulated: true, note: "reference unavailable" },
-    position: { side: "flat", size: 0, entryPrice: null, openedBlock: null, openedAt: null, maxExitAt: null, thesisStrategy: null, entrySignalBps: null, expiryBlock: null, stopPrice: null, takeProfitPrice: null, unrealizedUsd: 0 },
+    position: { side: "flat", size: 0, entryPrice: null, openedBlock: null, expiryBlock: null, stopPrice: null, takeProfitPrice: null, unrealizedUsd: 0 },
     portfolio: { startingCapitalUsd: 100, cashUsd: 100, mon: 0, markPrice: 100.05, positionValueUsd: 0, equityUsd: 100 },
     totals: { blocks: 1, decisions: 1, holds: 1, buys: 0, sells: 0, opened: 0, closed: 0, wins: 0, losses: 0, llmCalls: 0, realizedUsd: 0, unrealizedUsd: 0, feesUsd: 0, pnlUsd: 0, pnlPct: 0, maxDrawdownUsd: 0, modelUsd: 0 },
   };

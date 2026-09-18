@@ -106,9 +106,7 @@ function cexLag(state: EngineState): EngineResult {
   return {
     candidate: {
       action, sizeMon, reason: `reference leads Kuru by ${unabsorbedMoveBps.toFixed(1)} bps`, expectedEdgeBps: edge,
-      signalBps: unabsorbedMoveBps, maxHoldMs: config.cexMaxHoldMs, horizonBlocks: 0,
-      stopBps: Math.max(12, Math.min(30, Math.abs(unabsorbedMoveBps))),
-      takeProfitBps: Math.max(6, Math.min(25, Math.abs(unabsorbedMoveBps) * 0.75)), hedged: false,
+      horizonBlocks: 200, stopBps: 25, takeProfitBps: 50, hedged: false,
       requiredFeeds: ["kuru", "reference"],
     }, holdReason: "", signals,
   };
@@ -126,7 +124,7 @@ function liquidation(state: EngineState): EngineResult {
   return {
     candidate: {
       action, sizeMon, reason: "verified forced flow persists into Kuru depth", expectedEdgeBps: 15,
-      signalBps: 15, maxHoldMs: config.cexMaxHoldMs, horizonBlocks: 0, stopBps: 10, takeProfitBps: 12, hedged: false,
+      horizonBlocks: 15, stopBps: 10, takeProfitBps: 12, hedged: false,
       requiredFeeds: ["kuru", "liquidation"],
     }, holdReason: "", signals: costSignals(state),
   };
@@ -157,9 +155,7 @@ function meanReversion(state: EngineState): EngineResult {
   return {
     candidate: {
       action, sizeMon, reason: `local ${shock.toFixed(1)} bps shock with stable reference`, expectedEdgeBps: edge,
-      signalBps: shock, maxHoldMs: config.meanReversionMaxHoldMs, horizonBlocks: 0,
-      stopBps: Math.max(12, Math.min(35, Math.abs(shock))),
-      takeProfitBps: Math.max(8, Math.min(30, Math.abs(shock) * 0.75)), hedged: false,
+      horizonBlocks: 200, stopBps: 25, takeProfitBps: 50, hedged: false,
       requiredFeeds: ["kuru", "reference"],
     }, holdReason: "", signals: costSignals(state),
   };
