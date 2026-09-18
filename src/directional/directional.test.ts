@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Book } from "../book";
 import type { Features } from "../features";
-import { evaluateStrategy } from "./engines";
+import { applyGateConviction, evaluateStrategy } from "./engines";
 import { PaperExecutor } from "./paper";
 import type { DirectionalEvent, FeedHealth } from "./types";
 
@@ -23,9 +23,24 @@ describe("directional engines", () => {
 
   test("CEX lag requires an unabsorbed reference move that clears costs", () => {
     const out = evaluateStrategy("cex_lag", { block: 1, book, features, health,
-      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 20, updatedAt: Date.now() } });
+      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 15, updatedAt: Date.now() } });
     expect(out.candidate?.action).toBe("buy");
     expect(out.candidate?.expectedEdgeBps).toBeGreaterThan(0);
+  });
+
+  test("sizes stronger edges larger and lets Jev conviction amplify them", () => {
+    const weak = evaluateStrategy("cex_lag", { block: 1, book, features, health,
+      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 12, updatedAt: Date.now() } });
+    const strong = evaluateStrategy("cex_lag", { block: 1, book, features, health,
+      reference: { source: "test", bid: 100.7, ask: 100.9, mid: 100.8, fundingRate: 0, ret1Bps: 15, updatedAt: Date.now() } });
+    expect(weak.candidate?.sizeMon).toBeGreaterThanOrEqual(25);
+    expect(strong.candidate!.sizeMon).toBeGreaterThan(weak.candidate!.sizeMon);
+    const amplified = applyGateConviction("cex_lag", strong.candidate!, {
+      used: true, accepted: true, continuation: 1, exhaustion: 0, forcedFlow: 0,
+      transientShock: 0, eventMaterial: 0, reason: "strong", latencyMs: 1,
+    }, book);
+    expect(amplified.sizeMon).toBeGreaterThan(strong.candidate!.sizeMon);
+    expect(amplified.sizeMon).toBeLessThanOrEqual(500);
   });
 
   test("CEX lag does not use a static venue-price level as a directional edge", () => {
@@ -40,27 +55,27 @@ describe("directional engines", () => {
 describe("directional paper execution", () => {
   test("opens at the executable ask and exits at expiry", () => {
     const paper = new PaperExecutor();
-    const candidate = { action: "buy" as const, reason: "test", expectedEdgeBps: 20, horizonBlocks: 1, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
+    const candidate = { action: "buy" as const, sizeMon: 150, reason: "test", expectedEdgeBps: 20, horizonBlocks: 1, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
     const opened = paper.consider(10, book, candidate, true, "");
     expect(opened.status).toBe("opened");
     expect(opened.price).toBe(100.1);
-    expect(paper.portfolio(100.05)).toMatchObject({ mon: 100, cashUsd: -9910, equityUsd: 95 });
+    expect(paper.portfolio(100.05)).toMatchObject({ mon: 150, cashUsd: -14915, equityUsd: 92.5 });
     const closed = paper.update(11, { ...book, mid: 100.3, bid: 100.25, ask: 100.35 });
     expect(closed?.status).toBe("closed");
     expect(paper.position(100.3).side).toBe("flat");
-    expect(paper.portfolio(100.3)).toMatchObject({ mon: 0, cashUsd: 90, equityUsd: 90 });
+    expect(paper.portfolio(100.3)).toMatchObject({ mon: 0, cashUsd: 85, equityUsd: 85 });
 
     const restored = new PaperExecutor();
     restored.restore({
       position: paper.position(100.3), portfolio: paper.portfolio(100.3), totals: { ...paper.totals },
     } as DirectionalEvent);
-    expect(restored.portfolio(100.3)).toMatchObject({ mon: 0, cashUsd: 90, equityUsd: 90 });
+    expect(restored.portfolio(100.3)).toMatchObject({ mon: 0, cashUsd: 85, equityUsd: 85 });
     expect(restored.totals.closed).toBe(1);
   });
 
   test("rejects a paper entry when displayed L2 cannot fill the configured size", () => {
     const paper = new PaperExecutor();
-    const candidate = { action: "buy" as const, reason: "test", expectedEdgeBps: 20, horizonBlocks: 1, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
+    const candidate = { action: "buy" as const, sizeMon: 100, reason: "test", expectedEdgeBps: 20, horizonBlocks: 1, stopBps: 100, takeProfitBps: 100, hedged: false, requiredFeeds: ["kuru"] as ("kuru")[] };
     const shallow: Book = { ...book, levels: { bids: [[100, 99]], asks: [[100.1, 99]] } };
     const result = paper.consider(10, shallow, candidate, true, "");
     expect(result.status).toBe("rejected");
@@ -77,7 +92,7 @@ test("directional wire event round-trips without maker fields", () => {
     execution: { status: "held", action: "hold", price: null, size: 0, feeUsd: 0, slippageBps: 0, notionalUsd: 0, realizedPnlUsd: null, simulated: true, note: "reference unavailable" },
     position: { side: "flat", size: 0, entryPrice: null, openedBlock: null, expiryBlock: null, stopPrice: null, takeProfitPrice: null, unrealizedUsd: 0 },
     portfolio: { startingCapitalUsd: 100, cashUsd: 100, mon: 0, markPrice: 100.05, positionValueUsd: 0, equityUsd: 100 },
-    totals: { blocks: 1, decisions: 1, holds: 1, buys: 0, sells: 0, opened: 0, closed: 0, wins: 0, losses: 0, realizedUsd: 0, unrealizedUsd: 0, feesUsd: 0, pnlUsd: 0, pnlPct: 0, maxDrawdownUsd: 0, modelUsd: 0 },
+    totals: { blocks: 1, decisions: 1, holds: 1, buys: 0, sells: 0, opened: 0, closed: 0, wins: 0, losses: 0, llmCalls: 0, realizedUsd: 0, unrealizedUsd: 0, feesUsd: 0, pnlUsd: 0, pnlPct: 0, maxDrawdownUsd: 0, modelUsd: 0 },
   };
   const raw = JSON.parse(JSON.stringify(event));
   expect(raw.execution.simulated).toBe(true);

@@ -2,7 +2,7 @@ import { config } from "../config";
 import type { Book } from "../book";
 import type { Features } from "../features";
 import { executablePrice } from "./paper";
-import type { Candidate, DirectionalSignals, FeedHealth, ReferencePrice, StrategyId } from "./types";
+import type { Candidate, DirectionalSignals, FeedHealth, JevGate, ReferencePrice, StrategyId } from "./types";
 
 export interface EngineState {
   block: number;
@@ -38,6 +38,40 @@ const hold = (state: EngineState, holdReason: string): EngineResult => ({ candid
 const direction = (x: number): "buy" | "sell" => x >= 0 ? "buy" : "sell";
 const costs = (state: EngineState) => costSignals(state).roundTripCostBps;
 
+/** Scale a paper order with measured net edge, then cap it by risk and displayed depth. */
+export function sizeForEdge(state: EngineState, action: "buy" | "sell", edgeBps: number): number {
+  const levels = action === "buy" ? state.book.levels.asks : state.book.levels.bids;
+  const displayed = levels.reduce((sum, [, size]) => sum + size, 0);
+  const range = Math.max(10, config.minExpectedEdgeBps);
+  const conviction = Math.max(0, Math.min(1, (edgeBps - config.minExpectedEdgeBps) / range));
+  const desired = config.minDirectionalSizeMon
+    + (config.maxDirectionalSizeMon - config.minDirectionalSizeMon) * conviction ** 2;
+  const cap = Math.min(config.maxDirectionalSizeMon, config.maxPositionMon, displayed * 0.5);
+  if (cap < config.minDirectionalSizeMon) return 0;
+  return Math.floor(Math.max(config.minDirectionalSizeMon, Math.min(desired, cap)) / 5) * 5;
+}
+
+/** Let a real Jev confirmation amplify size, without allowing it to bypass hard caps. */
+export function applyGateConviction(strategy: StrategyId, candidate: Candidate, gate: JevGate, book: Book): Candidate {
+  if (!gate.used || !gate.accepted) return candidate;
+  const conviction = strategy === "mean_reversion"
+    ? gate.transientShock * (1 - gate.continuation)
+    : strategy === "liquidation"
+      ? gate.forcedFlow * gate.continuation
+      : strategy === "event"
+        ? gate.eventMaterial
+        : strategy === "carry"
+          ? 1 - gate.exhaustion
+          : gate.continuation * (1 - gate.exhaustion);
+  const multiplier = 0.5 + 1.5 * Math.max(0, Math.min(1, conviction));
+  const levels = candidate.action === "buy" ? book.levels.asks : book.levels.bids;
+  const displayed = levels.reduce((sum, [, size]) => sum + size, 0);
+  const cap = Math.min(config.maxDirectionalSizeMon, config.maxPositionMon, displayed * 0.5);
+  const scaled = Math.floor(Math.min(cap, candidate.sizeMon * multiplier) / 5) * 5;
+  const sizeMon = Math.max(config.minDirectionalSizeMon, scaled);
+  return { ...candidate, sizeMon };
+}
+
 function cexLag(state: EngineState): EngineResult {
   if (state.health.reference !== "live" || !state.reference) return hold(state, "reference feed unavailable or stale");
   const signals = costSignals(state);
@@ -46,9 +80,12 @@ function cexLag(state: EngineState): EngineResult {
   if (Math.abs(state.reference.ret1Bps) < config.referenceImpulseBps) return hold(state, "reference impulse below trigger");
   if (unabsorbedMoveBps * state.reference.ret1Bps <= 0) return hold(state, "Kuru already absorbed the reference impulse");
   if (edge < config.minExpectedEdgeBps) return hold(state, "unabsorbed move does not clear round-trip costs");
+  const action = direction(unabsorbedMoveBps);
+  const sizeMon = sizeForEdge(state, action, edge);
+  if (!sizeMon) return hold(state, "insufficient displayed depth for minimum size");
   return {
     candidate: {
-      action: direction(unabsorbedMoveBps), reason: `reference leads Kuru by ${unabsorbedMoveBps.toFixed(1)} bps`, expectedEdgeBps: edge,
+      action, sizeMon, reason: `reference leads Kuru by ${unabsorbedMoveBps.toFixed(1)} bps`, expectedEdgeBps: edge,
       horizonBlocks: 25, stopBps: 12, takeProfitBps: Math.min(Math.abs(unabsorbedMoveBps), 24), hedged: false,
       requiredFeeds: ["kuru", "reference"],
     }, holdReason: "", signals,
@@ -61,9 +98,12 @@ function liquidation(state: EngineState): EngineResult {
   if (state.health.liquidation !== "live") return hold(state, "verified liquidation feed unavailable");
   const volume = state.features.cvdMon;
   if (Math.abs(volume) < config.directionalSizeMon * 5) return hold(state, "forced flow below trigger");
+  const action = direction(volume);
+  const sizeMon = sizeForEdge(state, action, 15);
+  if (!sizeMon) return hold(state, "insufficient displayed depth for minimum size");
   return {
     candidate: {
-      action: direction(volume), reason: "verified forced flow persists into Kuru depth", expectedEdgeBps: 15,
+      action, sizeMon, reason: "verified forced flow persists into Kuru depth", expectedEdgeBps: 15,
       horizonBlocks: 15, stopBps: 10, takeProfitBps: 12, hedged: false,
       requiredFeeds: ["kuru", "liquidation"],
     }, holdReason: "", signals: costSignals(state),
@@ -89,9 +129,12 @@ function meanReversion(state: EngineState): EngineResult {
   if (Math.abs(state.reference.ret1Bps) > config.referenceImpulseBps) return hold(state, "reference confirms move; do not fade");
   const edge = Math.abs(shock) - costs(state);
   if (edge < config.minExpectedEdgeBps) return hold(state, "reversion does not clear execution costs");
+  const action = shock > 0 ? "sell" : "buy";
+  const sizeMon = sizeForEdge(state, action, edge);
+  if (!sizeMon) return hold(state, "insufficient displayed depth for minimum size");
   return {
     candidate: {
-      action: shock > 0 ? "sell" : "buy", reason: `local ${shock.toFixed(1)} bps shock with stable reference`, expectedEdgeBps: edge,
+      action, sizeMon, reason: `local ${shock.toFixed(1)} bps shock with stable reference`, expectedEdgeBps: edge,
       horizonBlocks: 40, stopBps: 14, takeProfitBps: Math.max(8, edge * 0.5), hedged: false,
       requiredFeeds: ["kuru", "reference"],
     }, holdReason: "", signals: costSignals(state),

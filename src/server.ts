@@ -14,6 +14,7 @@ export function startServer(
   meta: DirectionalMeta,
   history: () => DirectionalEvent[],
   controls: { setStrategy: (value: string) => StrategyId | null; activeStrategy: () => StrategyId } | null = null,
+  executions: () => DirectionalEvent[] = () => [],
 ) {
   const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const enc = new TextEncoder();
@@ -28,7 +29,7 @@ export function startServer(
     fetch(req) {
       const { pathname } = new URL(req.url);
       if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
-      if (pathname === "/snapshot") return json({ ...liveMeta(), latest: history().at(-1) ?? null });
+      if (pathname === "/snapshot") return json({ ...liveMeta(), latest: history().at(-1) ?? null, executions: executions() });
       if (pathname === "/strategy") {
         if (req.method !== "POST" || !controls) return json({ error: "not available" }, 405);
         return req.json().then((raw: unknown) => {
@@ -48,7 +49,7 @@ export function startServer(
       if (pathname === "/history") return json(history());
       if (pathname === "/events") {
         const stream = new ReadableStream<Uint8Array>({
-          start(c) { clients.add(c); send(c, "snapshot", { ...liveMeta(), history: history() }); },
+          start(c) { clients.add(c); send(c, "snapshot", { ...liveMeta(), history: history(), executions: executions() }); },
           cancel(c) { clients.delete(c); },
         });
         return new Response(stream, {

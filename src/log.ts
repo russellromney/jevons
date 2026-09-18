@@ -39,21 +39,33 @@ export function logDirectional(row: unknown) {
   logEvent({ kind: "directional", row });
 }
 
-/** Load recent complete directional events from the mounted append-only log. */
-export async function readDirectionalHistory(limit: number): Promise<DirectionalEvent[]> {
+/** Load block history and a separate execution tape from the append-only log. */
+export async function readDirectionalState(historyLimit: number, executionLimit = 100): Promise<{ history: DirectionalEvent[]; executions: DirectionalEvent[] }> {
   try {
     const raw = await readFile(join(config.dataDir, "events.jsonl"), "utf8");
-    const rows: DirectionalEvent[] = [];
+    const history: DirectionalEvent[] = [];
+    const executions: DirectionalEvent[] = [];
+    let llmCalls = 0;
     for (const line of raw.split("\n")) {
       try {
         const parsed = JSON.parse(line) as { kind?: string; row?: DirectionalEvent };
         const event = parsed.kind === "directional" ? parsed.row : null;
         // Older maker-era and pre-ledger events cannot restore a paper account.
-        if (event && event.portfolio && event.execution && typeof event.ts === "number") rows.push(event);
+        if (event && event.portfolio && event.execution && typeof event.ts === "number") {
+          if (event.decision?.jev?.used) llmCalls++;
+          history.push(event);
+          if (history.length > historyLimit) history.shift();
+          if (event.execution.status === "opened" || event.execution.status === "closed") {
+            executions.push(event);
+            if (executions.length > executionLimit) executions.shift();
+          }
+        }
       } catch { /* A trailing partial line is harmless after a restart. */ }
     }
-    return rows.slice(-limit);
+    // Backfill the cumulative counter for logs written before totals.llmCalls existed.
+    if (history.length) history.at(-1)!.totals.llmCalls = llmCalls;
+    return { history, executions };
   } catch {
-    return [];
+    return { history: [], executions: [] };
   }
 }

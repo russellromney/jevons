@@ -23,6 +23,7 @@ export interface FeedHealth {
 
 export interface Candidate {
   action: Exclude<Action, "hold">;
+  sizeMon: number;
   reason: string;
   expectedEdgeBps: number;
   horizonBlocks: number;
@@ -87,6 +88,7 @@ export interface DirectionalTotals {
   closed: number;
   wins: number;
   losses: number;
+  llmCalls: number;
   realizedUsd: number;
   unrealizedUsd: number;
   feesUsd: number;

@@ -1,6 +1,6 @@
 const url = (process.argv[2] ?? "http://127.0.0.1:3000").replace(/\/$/, "");
 const required = ["block", "strategy", "mid", "bestBid", "bestAsk", "spreadBps", "reference", "feedHealth", "decision", "execution", "position", "portfolio", "totals"];
-const totals = ["blocks", "decisions", "holds", "buys", "sells", "opened", "closed", "pnlUsd", "maxDrawdownUsd"];
+const totals = ["blocks", "decisions", "holds", "buys", "sells", "opened", "closed", "llmCalls", "pnlUsd", "maxDrawdownUsd"];
 const decision = ["strategy", "action", "reason", "candidate", "jev", "late"];
 const execution = ["status", "action", "price", "size", "feeUsd", "slippageBps", "notionalUsd", "realizedPnlUsd", "simulated", "note"];
 
@@ -18,5 +18,7 @@ for (const key of required) if (!(key in latest)) fail(`latest missing ${key}`);
 for (const key of totals) if (!(key in (latest.totals as Record<string, unknown>))) fail(`totals missing ${key}`);
 for (const key of decision) if (!(key in (latest.decision as Record<string, unknown>))) fail(`decision missing ${key}`);
 for (const key of execution) if (!(key in (latest.execution as Record<string, unknown>))) fail(`execution missing ${key}`);
+const candidate = (latest.decision as Record<string, unknown>).candidate as Record<string, unknown> | null;
+if (candidate && typeof candidate.sizeMon !== "number") fail("candidate missing sizeMon");
 if ((latest.execution as Record<string, unknown>).simulated !== true) fail("paper execution must be simulated");
 console.log("schema ok", url, "strategy", latest.strategy, "action", (latest.decision as Record<string, unknown>).action, "pnl", (latest.totals as Record<string, unknown>).pnlUsd);

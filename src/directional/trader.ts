@@ -1,10 +1,10 @@
 import { config } from "../config";
 import { computeFeatures, MidRing } from "../features";
-import { logDirectional, readDirectionalHistory } from "../log";
+import { logDirectional, readDirectionalState } from "../log";
 import { Market } from "../market";
 import { TradeFeed } from "../trades";
 import { classifyCandidate } from "./jev";
-import { evaluateStrategy } from "./engines";
+import { applyGateConviction, evaluateStrategy } from "./engines";
 import { PaperExecutor } from "./paper";
 import { ReferenceFeed } from "./reference";
 import { STRATEGIES, type DirectionalEvent, type DirectionalSignals, type FeedHealth, type StrategyId } from "./types";
@@ -13,6 +13,7 @@ const blankHealth = (): FeedHealth => ({ kuru: "live", reference: "missing", liq
 
 export class DirectionalTrader {
   readonly history: DirectionalEvent[] = [];
+  readonly executions: DirectionalEvent[] = [];
   private active: StrategyId = config.strategy;
   private busy = false;
   private ring = new MidRing();
@@ -37,11 +38,12 @@ export class DirectionalTrader {
   }
 
   async start() {
-    const restored = await readDirectionalHistory(config.historySize);
-    if (restored.length) {
-      this.history.push(...restored);
-      this.paper.restore(restored.at(-1)!);
-      console.log(`restored ${restored.length} directional events from paper log`);
+    const restored = await readDirectionalState(config.historySize);
+    if (restored.history.length) {
+      this.history.push(...restored.history);
+      this.executions.push(...restored.executions);
+      this.paper.restore(restored.history.at(-1)!);
+      console.log(`restored ${restored.history.length} directional events from paper log`);
     }
     this.reference.start();
     this.trades = new TradeFeed({ market: config.market, url: config.readRpcUrl, sizeDec: this.market.sizeDec });
@@ -77,6 +79,8 @@ export class DirectionalTrader {
       candidate = evaluated.candidate; reason = evaluated.holdReason; signals = evaluated.signals;
       if (candidate) {
         gate = await classifyCandidate({ strategy: this.active, candidate, kuru: { mid: book.mid, ret1Bps: features.ret1, ret5Bps: features.ret5, spreadBps: features.spreadBps, imbalance: features.imbalance, cvdMon: features.cvdMon }, reference });
+        if (gate.used) this.paper.totals.llmCalls++;
+        candidate = applyGateConviction(this.active, candidate, gate, book);
         if (!gate.accepted) reason = gate.reason;
       }
     }
@@ -94,6 +98,10 @@ export class DirectionalTrader {
     };
     this.latest = event; this.history.push(event);
     if (this.history.length > config.historySize) this.history.splice(0, this.history.length - config.historySize);
+    if (execution.status === "opened" || execution.status === "closed") {
+      this.executions.push(event);
+      if (this.executions.length > 100) this.executions.shift();
+    }
     this.onBlock(event); logDirectional(event);
   }
 }

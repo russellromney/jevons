@@ -21,7 +21,7 @@ const server = startServer({
   startedAt,
   activeStrategy: trader.strategy,
   strategies: trader.strategies,
-}, () => trader.history, { setStrategy: (value) => trader.setStrategy(value), activeStrategy: () => trader.strategy });
+}, () => trader.history, { setStrategy: (value) => trader.setStrategy(value), activeStrategy: () => trader.strategy }, () => trader.executions);
 broadcast = server.broadcast;
 
 await trader.start();
