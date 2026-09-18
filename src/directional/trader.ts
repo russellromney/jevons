@@ -78,8 +78,8 @@ export class DirectionalTrader {
       const evaluated = evaluateStrategy(this.active, { block, book, features, reference, health });
       candidate = evaluated.candidate; reason = evaluated.holdReason; signals = evaluated.signals;
       if (candidate) {
+        if (config.model === "jev" && config.typesafeKey) this.paper.totals.llmCalls++;
         gate = await classifyCandidate({ strategy: this.active, candidate, kuru: { mid: book.mid, ret1Bps: features.ret1, ret5Bps: features.ret5, spreadBps: features.spreadBps, imbalance: features.imbalance, cvdMon: features.cvdMon }, reference });
-        if (gate.used) this.paper.totals.llmCalls++;
         candidate = applyGateConviction(this.active, candidate, gate, book);
         if (!gate.accepted) reason = gate.reason;
       }

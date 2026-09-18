@@ -52,7 +52,8 @@ export async function readDirectionalState(historyLimit: number, executionLimit 
         const event = parsed.kind === "directional" ? parsed.row : null;
         // Older maker-era and pre-ledger events cannot restore a paper account.
         if (event && event.portfolio && event.execution && typeof event.ts === "number") {
-          if (event.decision?.jev?.used) llmCalls++;
+          // A fallback still means an LLM request was attempted and failed.
+          if (event.decision?.jev) llmCalls++;
           history.push(event);
           if (history.length > historyLimit) history.shift();
           if (event.execution.status === "opened" || event.execution.status === "closed") {
