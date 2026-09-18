@@ -3,6 +3,7 @@ const required = ["block", "strategy", "mid", "bestBid", "bestAsk", "spreadBps",
 const totals = ["blocks", "decisions", "holds", "buys", "sells", "opened", "closed", "llmCalls", "pnlUsd", "maxDrawdownUsd"];
 const decision = ["strategy", "action", "reason", "candidate", "jev", "late"];
 const execution = ["status", "action", "price", "size", "feeUsd", "slippageBps", "notionalUsd", "realizedPnlUsd", "simulated", "note"];
+const position = ["side", "size", "entryPrice", "openedBlock", "openedAt", "maxExitAt", "thesisStrategy", "entrySignalBps", "stopPrice", "takeProfitPrice", "unrealizedUsd"];
 
 function fail(message: string): never { console.error(`schema fail: ${message}`); process.exit(1); }
 const res = await fetch(`${url}/snapshot`).catch(() => fetch(url));
@@ -18,6 +19,7 @@ for (const key of required) if (!(key in latest)) fail(`latest missing ${key}`);
 for (const key of totals) if (!(key in (latest.totals as Record<string, unknown>))) fail(`totals missing ${key}`);
 for (const key of decision) if (!(key in (latest.decision as Record<string, unknown>))) fail(`decision missing ${key}`);
 for (const key of execution) if (!(key in (latest.execution as Record<string, unknown>))) fail(`execution missing ${key}`);
+for (const key of position) if (!(key in (latest.position as Record<string, unknown>))) fail(`position missing ${key}`);
 const candidate = (latest.decision as Record<string, unknown>).candidate as Record<string, unknown> | null;
 if (candidate && typeof candidate.sizeMon !== "number") fail("candidate missing sizeMon");
 if ((latest.execution as Record<string, unknown>).simulated !== true) fail("paper execution must be simulated");

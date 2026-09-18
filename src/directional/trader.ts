@@ -11,6 +11,21 @@ import { STRATEGIES, type DirectionalEvent, type DirectionalSignals, type FeedHe
 
 const blankHealth = (): FeedHealth => ({ kuru: "live", reference: "missing", liquidation: "missing", funding: "missing", events: "missing" });
 
+const thesisExitReason = (position: ReturnType<PaperExecutor["position"]>, reference: ReturnType<ReferenceFeed["snapshot"]>, health: FeedHealth) => {
+  if (position.side === "flat" || !position.thesisStrategy) return null;
+  if ((position.thesisStrategy === "cex_lag" || position.thesisStrategy === "mean_reversion") && health.reference !== "live") {
+    return "thesis invalidated: reference feed stale";
+  }
+  if (!reference) return null;
+  const direction = position.side === "long" ? 1 : -1;
+  if (direction * reference.ret1Bps <= -config.referenceImpulseBps) {
+    return position.thesisStrategy === "mean_reversion"
+      ? "thesis invalidated: reference confirms the local shock"
+      : "thesis invalidated: reference impulse reversed";
+  }
+  return null;
+};
+
 export class DirectionalTrader {
   readonly history: DirectionalEvent[] = [];
   readonly executions: DirectionalEvent[] = [];
@@ -69,13 +84,14 @@ export class DirectionalTrader {
     const basisBps = reference && health.reference === "live" ? ((reference.mid - book.mid) / book.mid) * 10_000 : null;
     const features = computeFeatures(book, this.ring, summary, 0, basisBps);
 
-    const exit = this.paper.update(block, book);
+    const evaluated = evaluateStrategy(this.active, { block, book, features, reference, health, equityUsd: this.paper.portfolio(book.mid).equityUsd });
+    const openPosition = this.paper.position(book.mid);
+    const exit = this.paper.update(block, book, true, thesisExitReason(openPosition, reference, health));
     let candidate = null;
     let reason = exit?.note ?? "";
     let gate = null;
-    let signals: DirectionalSignals = { basisBps, referenceReturnBps: reference?.ret1Bps ?? null, kuruReturnBps: features.ret5, entryCostBps: 0, roundTripCostBps: 0, residualBps: null };
-    if (!exit) {
-      const evaluated = evaluateStrategy(this.active, { block, book, features, reference, health, equityUsd: this.paper.portfolio(book.mid).equityUsd });
+    let signals: DirectionalSignals = evaluated.signals;
+    if (!exit && openPosition.side === "flat") {
       candidate = evaluated.candidate; reason = evaluated.holdReason; signals = evaluated.signals;
       if (candidate) {
         if (config.model === "jev" && config.typesafeKey) this.paper.totals.llmCalls++;
@@ -85,7 +101,7 @@ export class DirectionalTrader {
       }
     }
 
-    const execution = exit ?? this.paper.consider(block, book, candidate, gate?.accepted ?? false, reason || "no candidate");
+    const execution = exit ?? this.paper.consider(block, book, candidate, gate?.accepted ?? false, reason || "no candidate", this.active);
     // Update after an open/close so every event contains current P&L.
     this.paper.update(block, book, false);
     const action = execution.action;

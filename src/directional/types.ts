@@ -26,6 +26,8 @@ export interface Candidate {
   sizeMon: number;
   reason: string;
   expectedEdgeBps: number;
+  signalBps?: number;
+  maxHoldMs?: number;
   horizonBlocks: number;
   stopBps: number;
   takeProfitBps: number;
@@ -72,6 +74,10 @@ export interface DirectionalPosition {
   size: number;
   entryPrice: number | null;
   openedBlock: number | null;
+  openedAt: number | null;
+  maxExitAt: number | null;
+  thesisStrategy: StrategyId | null;
+  entrySignalBps: number | null;
   expiryBlock: number | null;
   stopPrice: number | null;
   takeProfitPrice: number | null;

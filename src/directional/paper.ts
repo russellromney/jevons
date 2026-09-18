@@ -1,6 +1,6 @@
 import { config } from "../config";
 import type { Book } from "../book";
-import type { Candidate, DirectionalEvent, DirectionalPortfolio, DirectionalPosition, DirectionalTotals, PaperExecution } from "./types";
+import type { Candidate, DirectionalEvent, DirectionalPortfolio, DirectionalPosition, DirectionalTotals, PaperExecution, StrategyId } from "./types";
 
 const emptyTotals = (): DirectionalTotals => ({
   blocks: 0, decisions: 0, holds: 0, buys: 0, sells: 0, opened: 0, closed: 0, wins: 0, losses: 0,
@@ -12,6 +12,10 @@ export class PaperExecutor {
   private sizeMon = 0;
   private entry: number | null = null;
   private openedBlock: number | null = null;
+  private openedAt: number | null = null;
+  private maxExitAt: number | null = null;
+  private thesisStrategy: StrategyId | null = null;
+  private entrySignalBps: number | null = null;
   private expiryBlock: number | null = null;
   private stopPrice: number | null = null;
   private takeProfitPrice: number | null = null;
@@ -26,6 +30,7 @@ export class PaperExecutor {
     const sign = this.side === "long" ? 1 : this.side === "short" ? -1 : 0;
     const unrealizedUsd = this.entry == null ? 0 : sign * this.sizeMon * (mid - this.entry);
     return { side: this.side, size: this.sizeMon, entryPrice: this.entry, openedBlock: this.openedBlock,
+      openedAt: this.openedAt, maxExitAt: this.maxExitAt, thesisStrategy: this.thesisStrategy, entrySignalBps: this.entrySignalBps,
       expiryBlock: this.expiryBlock, stopPrice: this.stopPrice, takeProfitPrice: this.takeProfitPrice, unrealizedUsd };
   }
 
@@ -42,6 +47,11 @@ export class PaperExecutor {
     this.sizeMon = p.size;
     this.entry = p.entryPrice;
     this.openedBlock = p.openedBlock;
+    this.openedAt = p.openedAt ?? (p.side === "flat" ? null : event.ts);
+    this.thesisStrategy = p.thesisStrategy ?? (p.side === "flat" ? null : event.strategy);
+    this.entrySignalBps = p.entrySignalBps ?? null;
+    const fallbackHold = this.thesisStrategy === "mean_reversion" ? config.meanReversionMaxHoldMs : config.cexMaxHoldMs;
+    this.maxExitAt = p.maxExitAt ?? (this.openedAt == null ? null : this.openedAt + fallbackHold);
     this.expiryBlock = p.expiryBlock;
     this.stopPrice = p.stopPrice;
     this.takeProfitPrice = p.takeProfitPrice;
@@ -53,7 +63,7 @@ export class PaperExecutor {
     Object.assign(this.totals, event.totals);
   }
 
-  update(block: number, book: Book, countBlock = true) {
+  update(block: number, book: Book, countBlock = true, thesisExit: string | null = null, now = Date.now()) {
     if (countBlock) this.totals.blocks++;
     const p = this.position(book.mid);
     this.totals.unrealizedUsd = p.unrealizedUsd;
@@ -78,12 +88,13 @@ export class PaperExecutor {
     if (stopped) return this.close(block, book, "stop");
     if (target) return this.close(block, book, "take profit");
     if (favorableBps >= config.trailActivationBps && givebackBps >= config.trailGivebackBps) return this.close(block, book, "trailing profit");
-    if (block >= (this.expiryBlock ?? Infinity)) return this.close(block, book, "maximum holding time");
+    if (thesisExit) return this.close(block, book, thesisExit);
+    if (now >= (this.maxExitAt ?? Infinity)) return this.close(block, book, "maximum wall-clock holding time");
     if (this.totals.pnlUsd <= -config.maxLossUsd) return this.close(block, book, "max loss");
     return null;
   }
 
-  consider(block: number, book: Book, candidate: Candidate | null, accepted: boolean, reason: string): PaperExecution {
+  consider(block: number, book: Book, candidate: Candidate | null, accepted: boolean, reason: string, strategy: StrategyId = "cex_lag", now = Date.now()): PaperExecution {
     this.totals.decisions++;
     if (this.side !== "flat") {
       this.totals.holds++;
@@ -102,7 +113,9 @@ export class PaperExecutor {
     this.side = candidate.action === "buy" ? "long" : "short";
     this.sizeMon = size;
     this.favorablePrice = book.mid;
-    this.entry = px; this.openedBlock = block; this.expiryBlock = block + candidate.horizonBlocks;
+    this.entry = px; this.openedBlock = block; this.openedAt = now;
+    this.maxExitAt = now + (candidate.maxHoldMs ?? (strategy === "mean_reversion" ? config.meanReversionMaxHoldMs : config.cexMaxHoldMs));
+    this.thesisStrategy = strategy; this.entrySignalBps = candidate.signalBps ?? null; this.expiryBlock = null;
     this.stopPrice = this.side === "long" ? px * (1 - candidate.stopBps / 10_000) : px * (1 + candidate.stopBps / 10_000);
     this.takeProfitPrice = this.side === "long" ? px * (1 + candidate.takeProfitBps / 10_000) : px * (1 - candidate.takeProfitBps / 10_000);
     this.totals.opened++; if (candidate.action === "buy") this.totals.buys++; else this.totals.sells++;
@@ -121,7 +134,7 @@ export class PaperExecutor {
     const pnl = sign * size * (px - (this.entry ?? px));
     this.cashUsd += action === "buy" ? -notionalUsd - fee : notionalUsd - fee;
     this.realizedUsd += pnl; this.feesUsd += fee; this.totals.closed++; if (pnl >= 0) this.totals.wins++; else this.totals.losses++;
-    this.side = "flat"; this.sizeMon = 0; this.entry = null; this.openedBlock = null; this.expiryBlock = null; this.stopPrice = null; this.takeProfitPrice = null; this.favorablePrice = null;
+    this.side = "flat"; this.sizeMon = 0; this.entry = null; this.openedBlock = null; this.openedAt = null; this.maxExitAt = null; this.thesisStrategy = null; this.entrySignalBps = null; this.expiryBlock = null; this.stopPrice = null; this.takeProfitPrice = null; this.favorablePrice = null;
     return { status: "closed", action, price: px, size, feeUsd: fee, slippageBps: impactBps(book, action, raw), notionalUsd, realizedPnlUsd: pnl - fee, simulated: true, note };
   }
 

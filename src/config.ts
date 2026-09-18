@@ -63,5 +63,7 @@ export const config = {
   maxPaperLeverage: Number(env("MAX_PAPER_LEVERAGE", "50")),
   trailActivationBps: Number(env("TRAIL_ACTIVATION_BPS", "12")),
   trailGivebackBps: Number(env("TRAIL_GIVEBACK_BPS", "6")),
+  cexMaxHoldMs: Number(env("CEX_MAX_HOLD_MS", "90000")),
+  meanReversionMaxHoldMs: Number(env("MEAN_REVERSION_MAX_HOLD_MS", "300000")),
   minExpectedEdgeBps: Number(env("MIN_EXPECTED_EDGE_BPS", "5")),
 };
