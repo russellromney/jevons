@@ -1,5 +1,3 @@
-import { experimental_evaluate } from "ai";
-import { createTypeSafeAi } from "@ai-sdk/typesafe-ai";
 import { config } from "../config";
 import type { Candidate, JevGate, ReferencePrice, StrategyId } from "./types";
 
@@ -52,6 +50,12 @@ export async function classifyCandidate(state: GateState): Promise<JevGate> {
   if (config.model !== "jev" || !config.typesafeKey) return deterministic(state);
   const t0 = Date.now();
   try {
+    // These SDKs are large. Keep them off the always-on feed path and load
+    // them only after deterministic code finds a candidate worth gating.
+    const [{ experimental_evaluate }, { createTypeSafeAi }] = await Promise.all([
+      import("ai"),
+      import("@ai-sdk/typesafe-ai"),
+    ]);
     const model = createTypeSafeAi({ apiKey: config.typesafeKey }).evaluationModel(config.jevModelId);
     const result = await experimental_evaluate({ model, state: JSON.parse(JSON.stringify(state)), questions: QUESTIONS });
     const answers = result.answers as Record<string, any>;
